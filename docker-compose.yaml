@@ -7,9 +7,9 @@ services:
       POSTGRES_PASSWORD: DadR0cks
       POSTGRES_DB: mydatabase 
     ports:
-      - "5434:5432"
+      - "5440:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      
+
 volumes:
   pgdata:
