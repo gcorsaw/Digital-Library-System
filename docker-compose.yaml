@@ -3,9 +3,9 @@ services:
     image: postgres:16
     container_name: my_postgres_db
     environment:
-      POSTGRES_USER: gcorsaw
-      POSTGRES_PASSWORD: DadR0cks
-      POSTGRES_DB: mydatabase 
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     ports:
       - "5440:5432"
     volumes:
