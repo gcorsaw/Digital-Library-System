@@ -5,6 +5,7 @@ from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel
 from datetime import date
+from fastapi.encoders import jsonable_encoder
 
 # def config(filename='database.ini', section='postgresql'):
 #     parser = ConfigParser()
@@ -289,6 +290,39 @@ def delete_book_endpoint(book_id: int):
     finally:
         if connection is not None:
             connection.close()
+
+class Book_Description(BaseModel):
+    book_id: int
+    book_title: str
+    book_description: str | None = None
+
+def create_dummy_book_table():
+        return{
+            1: {
+                "book_id": 1,
+                "book_title": "Hollow",
+                "book_description": "A book about survival in a dangerous forest determined to survive.",
+            },
+            2: {
+                "book_id": 2,
+                "book_title": "Never Keep",
+                "book_description": "A book involving magic, friendship, and enemies to lovers",
+            },
+        }
+
+dummy_books = create_dummy_book_table()
+
+class Book_Description_Update(BaseModel):
+    book_description: str
+
+@library_app.put("/books/{book_id}/description", response_model=Book_Description)
+def description_change(book_id: int, summary: Book_Description_Update):
+    book = dummy_books.get(book_id)
+    if book is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    book["book_description"] = summary.book_description
+    return Book_Description(**book)
 
 def main():
     print("Hello from digital-library-system!")

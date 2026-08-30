@@ -102,3 +102,29 @@ def test_search_info_success():
     search_info = response.json()
     assert "books" in search_info
     assert isinstance(search_info["books"], list)
+
+def test_description_change_updates_dummy_book():
+    client = TestClient(library_app)
+
+    client.post("/books/dummy")
+    response = client.put(
+        "/books/1/description",
+        json={"book_description": "Updated description for Hollow."},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["book_id"] == 1
+    assert data["book_title"] == "Hollow"
+    assert data["book_description"] == "Updated description for Hollow."
+
+def test_description_change_returns_404_for_missing_books():
+    client = TestClient(library_app)
+
+    response = client.put(
+        "/books/999/description",
+        json={"book_description": "Nope"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Book not found"
