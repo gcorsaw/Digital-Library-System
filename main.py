@@ -1,11 +1,10 @@
-import psycopg2, os 
-#import pytest #adds pytest, os, and psycopg2
+import os
+import psycopg2
 from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
-from fastapi import FastAPI, HTTPException, Depends #adds depends
-from fastapi.responses import JSONResponse
-
-
+from fastapi import FastAPI, HTTPException, status
+from pydantic import BaseModel
+from datetime import date
 
 # def config(filename='database.ini', section='postgresql'):
 #     parser = ConfigParser()
@@ -94,7 +93,7 @@ def get_book_endpoint():
         raise HTTPException(status_code=500, detail=str(e))
 
 @library_app.get("/books/summaries")
-def get_books_summaries_from_database():
+def get_book_summaries_from_database():
     connection = None
     try:
         connection = psycopg2.connect(
@@ -116,7 +115,7 @@ def get_books_summaries_from_database():
         if connection is not None:
             connection.close()
 
-@library_app.get("/book/info")
+@library_app.get("/books/info")
 def get_details_from_database():
     connection = None
     try:
@@ -135,6 +134,59 @@ def get_details_from_database():
         return {"books":info_query}
     except Exception as e:
         raise HTTPException(status_code = 500, detail = "Could not find info")
+    finally:
+        if connection is not None:
+            connection.close()
+
+class Book(BaseModel):
+    book_isbn: str
+    book_title: str
+    author_id: int | None = None
+    publish_date: date | None = None 
+
+@library_app.post("/books", status_code=status.HTTP_201_CREATED)
+def user_add_book(book: Book):
+    connection = None
+    try:
+        connection = psycopg2.connect(
+            dbname=get_env("DB_NAME"),
+            user = get_env("DB_USER"),
+            password = get_env("DB_PASSWORD"),
+            host = get_env("DB_HOST"),
+            port=int(get_env("DB_PORT"))
+        )
+        cursor = connection.cursor(cursor_factory=RealDictCursor)
+        query = """
+        insert into book_info(book_isbn, book_title, author_id, publish_date)
+        values (%s, %s, %s, %s) 
+        RETURNING *
+        """
+        cursor.execute(
+            query, (book.book_isbn, book.book_title, book.author_id, book.publish_date)
+        )
+        new_book = cursor.fetchone()
+        connection.commit()
+
+        return {"message": "Book added successfully", "book": new_book}
+    except psycopg2.errors.UniqueViolation:
+        if connection is not None:
+            connection.rollback()
+        raise HTTPException(
+            status_code = 409,
+            detail="A book with this ISBN already exists."
+        )
+    except psycopg2.errors.ForeignKeyViolation:
+        if connection is not None:
+            connection.rollback()
+        raise HTTPException(
+            status_code = 400,
+            detail = "Invalid author_id. The author does not exist."
+        )
+    except Exception as e:
+        if connection is not None:
+            connection.rollback()
+        raise HTTPException(status_code=500, detail=f"Could not add book: {str(e)}")
+
     finally:
         if connection is not None:
             connection.close()
@@ -199,6 +251,41 @@ def get_single_book_endpoint(book_id: int):
         raise
     except Exception as e:
         raise HTTPException(status_code=500,detail=str(e))
+    finally:
+        if connection is not None:
+            connection.close()
+
+@library_app.delete("/books/{book_id}")
+def delete_book_endpoint(book_id: int):
+    connection = None
+    try:
+        connection = psycopg2.connect(
+            dbname=get_env("DB_NAME"),
+            user=get_env("DB_USER"),
+            password=get_env("DB_PASSWORD"),
+            host=get_env("DB_HOST"),
+            port=int(get_env("DB_PORT"))
+        )
+        cursor = connection.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute(
+            "DELETE FROM book_info WHERE book_id = %s RETURNING *;",
+            (book_id,),
+        )
+        deleted_book = cursor.fetchone()
+
+        if deleted_book is None:
+            raise HTTPException(status_code=404, detail="Book not found")
+
+        connection.commit()
+        return {"message": "Book deleted successfully", "book": deleted_book}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        if connection is not None:
+            connection.rollback()
+        raise HTTPException(status_code=500, detail=f"Could not delete book: {str(e)}")
     finally:
         if connection is not None:
             connection.close()
