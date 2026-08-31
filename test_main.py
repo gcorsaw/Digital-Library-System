@@ -128,3 +128,31 @@ def test_description_change_returns_404_for_missing_books():
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Book not found"
+
+def test_title_search():
+    client = TestClient(library_app)
+    response = client.get("/books/search?title=king")
+
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "query" in data
+    assert "books" in data
+    assert isinstance(data["books"], list)
+    assert data["query"] == "king"
+
+def test_title_search_no_results():
+    client = TestClient(library_app)
+    response = client.get("/books/search?title=zzzznotrealword")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["query"] == "zzzznotrealword"
+    assert data["books"] == []
+
+def test_title_search_missing_query():
+    client = TestClient(library_app)
+    response = client.get("/books/search")
+
+    #This assert will return a 422 error if the title is missing as the query parameters require title
+    assert response.status_code == 422

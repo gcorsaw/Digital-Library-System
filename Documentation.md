@@ -43,3 +43,10 @@
         * The next step in the process was to perfrom a `git add -u` command. The `-u` flag stands for "update" and this will tell Git to automatically stage files that have been modified or deleted locally, een if they aren't there anymore. We would also need to commit the changes with a message as well. Finally, we could push those changes to the main branch (or the branch that we want to push it too).
     * As mentioned before, the most difficult part about my task today was figuring out the Angular project. I would say the interesting part about the task today was learning about how BaseModel works more. Another portion of today's task was being able to use `.put` during the testing process. This was interesting because `.put` creates a new resource or replaces a representation fo the target resouce with the request content.
         * Comparing the `.put` to `.post` is `PUT` is idempotent. This means that calling it once is no different from calling it several times successfully and there are no side effects.
+
+1. Monday Tasks (8/31/2026)
+    * The first task that I did was creating to create a Dockerfile. This was important because this file is going to provide a blueprint or script of sequential instructions that would automate the creation of a Docker image.
+        * This process was interesting because some of the concepts from creating a Docker-Compose.yaml file from when I first started the project. 
+        * Another part that was interesing was the `CMD <command>`. This is because this is going to allow us to define the default program that is run once we start the container based on the image that it's creating.
+        * It wasn't testing properly, however, I was able to fix the problem as it was needed to be rebuilt with the creation of the `requirements.txt` file
+            * I would say attempting to build the Docker file was the frustrating portion about this first task. However, after solving the problem, it was a relief because after testing the link from the Dockerfile, it was a success.

@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel
 from datetime import date
 from fastapi.encoders import jsonable_encoder
+import uvicorn
 
 # def config(filename='database.ini', section='postgresql'):
 #     parser = ConfigParser()
@@ -196,6 +197,10 @@ def user_add_book(book: Book):
 def read_root():
     return {"message": "Hello World"}
 
+"""This function (get_book_database) will make a connection to the database and have an array for the book records be initialized.
+This array is going to allow for the book data to be return safely. The try block is going to be similar to that of the other functions
+in this file, but the difference is that after the declaration/initialization of the cursor, the cursor is going to execute the 
+SELECT * FROM book_info PostgreSQL command. This is going to retrieve all of the information that we currently of the books in our database"""
 def get_book_database():
     """Fetch and print all the rows from the book infor as a record set (list 
     of dictionaries)"""
@@ -222,12 +227,61 @@ def get_book_database():
         return book_records #this return statement will allow for the FastAPI to access the data
     
     except(Exception, psycopg2.DatabaseError) as error:
+        """This except block is has a different error than what we may typically use.
+        However, with this function retrieving all of the information from one specific table.
+        This error exception is raise for errors that are related to the database speicifically
+        """
         print(error)
         raise error
     finally:
         if connection is not None:
             connection.close()
 
+@library_app.get("/books/search")
+def search_title_by_word(title: str):
+    if not title or not title.strip():
+        raise HTTPException(status_code=400, detail="Title is required")
+    title = title.strip()
+    if " " in title:
+        raise HTTPException(status_code=400, detail="Please provide only one word to search")
+
+    connection = None
+
+    """The try-block is going to create a new connection to a new database session given
+    the database name, user, password, and the host, and port."""
+    try:
+        connection = psycopg2.connect(
+            dbname=get_env("DB_NAME"),
+            user=get_env("DB_USER"),
+            password=get_env("DB_PASSWORD"),
+            host=get_env("DB_HOST"),
+            port=int(get_env("DB_PORT"))
+        )
+        cursor = connection.cursor(cursor_factory=RealDictCursor)
+        query = """ 
+                SELECT * 
+                FROM book_info 
+                WHERE book_title ILIKE %s 
+                ORDER BY book_title;
+        """
+        search_pattern = f"%{title}%"
+        cursor.execute(query, (search_pattern,))
+        results = cursor.fetchall()
+
+        return{"query": title, "books": results}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+    finally:
+        if connection is not None:
+            connection.close()
+
+"""The following function will get a single book from the database. What's unique
+about the paramter for this function is that the book_id is going to be recognized
+as an integer. This function will fetch a single book by ID, validate
+that a specific record with the ID exists. It will also support 
+updating and deleting a specific book. It'll also return a detailed record data."""
 @library_app.get("/books/{book_id}")           
 def get_single_book_endpoint(book_id: int):
     connection = None
@@ -324,6 +378,58 @@ def description_change(book_id: int, summary: Book_Description_Update):
     book["book_description"] = summary.book_description
     return Book_Description(**book)
 
+@library_app.get("/books/search")
+def search_title_by_word(title: str):
+    if not title or not title.strip():
+        raise HTTPException(status_code=400, detail="Title is required")
+    title = title.strip()
+    if " " in title:
+        raise HTTPException(status_code=400, detail="Please provide only one word to search")
+
+    connection = None
+
+    """The try-block is going to create a new connection to a new database session given
+    the database name, user, password, and the host, and port."""
+    try:
+        connection = psycopg2.connect(
+            dbname=get_env("DB_NAME"),
+            user=get_env("DB_USER"),
+            password=get_env("DB_PASSWORD"),
+            host=get_env("DB_HOST"),
+            port=int(get_env("DB_PORT"))
+        )
+        cursor = connection.cursor(cursor_factory=RealDictCursor)
+        """The query is going to be selecting all from the book info table where the 
+        title is the ILIKE is going to be the operator that is going to be used for
+        string pattern matching. This is also where the %s is coming in, the %s is a
+        string format specifier used as a placeholder to insert a value into a
+        string dynamically and then it's going to order the results by the book
+        title."""
+
+        query = """ 
+                SELECT * 
+                FROM book_info 
+                WHERE book_title ILIKE %s 
+                ORDER BY book_title;
+        """
+
+        search_pattern = f"%{title}%"
+        cursor.execute(query, (search_pattern,))
+        results = cursor.fetchall()
+
+        return {"query": title, "books": results}
+    
+    except Exception as e:
+        """This except block of code is utilizing the HTTPException. This is a
+        standard error class that is used in web frameworks to stop request processing
+        and return an HTTP error code to the client. Typically, in FastAPI, it's used
+        for raising errors. """
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+    finally:
+        if connection is not None:
+            connection.close()
+
 def main():
     print("Hello from digital-library-system!")
     # connect()
@@ -334,7 +440,9 @@ def main():
     read_root()
 
 if __name__ == "__main__":
+    uvicorn.run(library_app, host="0.0.0.0", port=8000)
     main()
+
 """
 @pytest.fixture(autouse=True)
 def setup_test_env():
