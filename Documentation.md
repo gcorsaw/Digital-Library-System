@@ -50,3 +50,4 @@
         * Another part that was interesing was the `CMD <command>`. This is because this is going to allow us to define the default program that is run once we start the container based on the image that it's creating.
         * It wasn't testing properly, however, I was able to fix the problem as it was needed to be rebuilt with the creation of the `requirements.txt` file
             * I would say attempting to build the Docker file was the frustrating portion about this first task. However, after solving the problem, it was a relief because after testing the link from the Dockerfile, it was a success.
+    * I also created another API function that would allow the user to search the titles with a single word and it would pull up the titles that have a word in the title.
