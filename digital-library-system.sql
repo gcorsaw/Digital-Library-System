@@ -5,42 +5,79 @@ create table author_info(
 );
 
 create table book_info(
-	book_id INT generated always as identity primary key,	
+	book_id INT generated always as identity primary key,
 	book_isbn VARCHAR(20) unique,
 	book_title VARCHAR(255) not null,
 	author_id INT references author_info(author_id),
-	publish_date date,
-	genre VARCHAR(500),
-	media_type VARCHAR(500)
+	publish_date date
 );
 
 create table reader_info(
 	user_id INT generated always as identity primary key,
-	username varchar(50) unique not null,
-	is_offline boolean default true
+	username VARCHAR(50) unique not null,
+	offline_sync_enabled boolean default true
 );
 
 create table book_tracking(
 	user_id INT references reader_info(user_id) on delete cascade,
 	book_id INT references book_info(book_id) on delete cascade,
-	book_summary varchar(300),
-	book_ratings INT not null check (book_ratings between 1 and 5),
-	read_status boolean default false not null,
+	book_summary VARCHAR(300),
+	book_ratings INT check (book_ratings between 1 and 5),
+	read_status VARCHAR(10) not null default 'want'
+		check (read_status in ('want', 'reading', 'finished')),
 	primary key (user_id, book_id)
+);
+
+create table genre(
+	genre_id INT generated always as identity primary key,
+	genre_name VARCHAR(50) unique not null
+);
+
+create table book_genre(
+	book_id INT references book_info(book_id) on delete cascade,
+	genre_id INT references genre(genre_id) on delete cascade,
+	primary key (book_id, genre_id)
+);
+
+create table media_type(
+	media_type_id INT generated always as identity primary key,
+	media_type_name VARCHAR(50) unique not null
+);
+
+create table book_media_type(
+	book_id INT references book_info(book_id) on delete cascade,
+	media_type_id INT references media_type(media_type_id) on delete cascade,
+	primary key (book_id, media_type_id)
 );
 
 insert into author_info (first_name, last_name) values
 ('George', 'Orwell'),
 ('Jane', 'Austen');
 
-insert into book_info(book_isbn, book_title, author_id, publish_date, genre, media_type) values
-('9780451524935', '1984', (select author_id from author_info where first_name='George' and last_name='Orwell'), 
-'1949-06-08', 'Dystopian Fiction, Political Fiction, Social Science fiction', 'Book/novel, Feature Film'),
-('9780141439518', 'Pride and Prejudice', (select author_id from author_info where first_name='Jane' and last_name='Austen'), 
-'1813-01-28','Fiction, Satire, Romance, Novel of manners', 'Television series, feature films, e-books, 
-audiobooks, online texts, print novel');
+insert into book_info(book_isbn, book_title, author_id, publish_date) values
+('9780451524935', '1984',
+	(select author_id from author_info where first_name='George' and last_name='Orwell'),
+	'1949-06-08'),
+('9780141439518', 'Pride and Prejudice',
+	(select author_id from author_info where first_name='Jane' and last_name='Austen'),
+	'1813-01-28');
 
-insert into reader_info (username, is_offline) values
+insert into genre (genre_name) values
+('Dystopian Fiction'), ('Political Fiction'), ('Social Science Fiction'),
+('Fiction'), ('Satire'), ('Romance'), ('Novel of Manners');
+
+insert into book_genre (book_id, genre_id)
+select b.book_id, g.genre_id
+from book_info b
+join genre g on
+	(b.book_isbn = '9780451524935' and g.genre_name in ('Dystopian Fiction', 'Political Fiction', 'Social Science Fiction'))
+	or (b.book_isbn = '9780141439518' and g.genre_name in ('Fiction', 'Satire', 'Romance', 'Novel of Manners'));
+
+insert into media_type (media_type_name) values
+('Book/Novel'), ('Feature Film'),
+('Television Series'), ('E-book'), ('Audiobook'), ('Online Text'), ('Print Novel');
+
+insert into reader_info (username, offline_sync_enabled) values
 ('grace_reads', false),
 ('booklover42', true);
 
@@ -48,20 +85,27 @@ insert into book_tracking(user_id, book_id, book_summary, book_ratings, read_sta
 (
 	(select user_id from reader_info where username = 'grace_reads'),
 	(select book_id from book_info where book_isbn = '9780451524935'),
-	'A chilling look at totalitarian surveillance.', 5, true
+	'A chilling look at totalitarian surveillance.', 5, 'finished'
 ),
 (
 	(select user_id from reader_info where username = 'booklover42'),
 	(select book_id from book_info where book_isbn = '9780141439518'),
-	'Wit, romance, and social commentary done right.', 5, true
+	'Wit, romance, and social commentary done right.', 5, 'finished'
 );
 
 select * from author_info;
 select * from book_info;
 select * from reader_info;
 select * from book_tracking;
+select * from genre;
+select * from book_genre;   
+select * from media_type;
 
 drop table if exists book_tracking;
+drop table if exists book_genre;
+drop table if exists book_media_type;
+drop table if exists genre;
+drop table if exists media_type;
 drop table if exists book_info;
 drop table if exists reader_info;
 drop table if exists author_info;
