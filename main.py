@@ -39,23 +39,25 @@ import uvicorn
 library_app = FastAPI()
 
 load_dotenv()
-
+"""The get_env function is going to be used to get the environment variables
+that are needed to connect to the database. This function is also going to be used 
+to get the environemnet variables thta are needed to connnect to the database.
+The function is going to check if the environment variable is set, if it's not set,
+then it's going to raise a RunTimeError. If the environment variable is set, 
+then it's going to return the value of the environment variable."""
 def get_env(env_name):
     if os.environ.get("TESTING") == "True" and env_name == "DB_NAME":
         return "digital-library-system"
-        
-    env_value = os.environ.get(env_name)
 
+    env_value = os.environ.get(env_name)
     if env_value is not None:
         env_value = env_value.strip()
 
-    print(f"env_value is {env_value}")
-
     if env_value is None and env_name == "DB_PORT":
         return "5440"
-    
-    if env_value is None:
-        print(f"You must set environment variable ${env_name} to run the program")
+
+    if env_value in (None, ""):
+        raise RuntimeError(f"Missing required environment variable: {env_name}")
 
     return env_value
 
@@ -80,7 +82,7 @@ def connect():
     except (Exception, psycopg2.DatabaseError) as error:
         print(error)
         raise(error)
-    
+    # if the connection is not None, then close the connection to the database
     finally:
         if connection is not None:
             connection.close()
@@ -97,6 +99,17 @@ def get_book_endpoint():
 @library_app.get("/books/summaries")
 def get_book_summaries_from_database():
     connection = None
+    """In the try block, the connection to the database is going to be established. 
+    The cursor is going to be initialized and the SELECT book_id, book_title FROM 
+    book_info; command is going to be executed. the details_query variable is 
+    going to be initialized and the cursor.fetchall() command is going to be executed.
+    The fetchall() command is going to return all of the rows from the SELECT command.
+    The cursor is going to be closed and the details_query variable is going to be returned
+    as a dictionary with the "books" as the key. In the except block, if there's 
+    an error, then the HTTPException is going to be raised with a status code of 500
+    and the detail message is going to be "Could not find book details". 
+    In the finally block, if the connection is not None, then the connection is
+    going to be closed."""
     try:
         connection = psycopg2.connect(
             dbname=get_env("DB_NAME"),
@@ -149,6 +162,13 @@ class Book(BaseModel):
 @library_app.post("/books", status_code=status.HTTP_201_CREATED)
 def user_add_book(book: Book):
     connection = None
+    """The first except block is going to be used to catch the psycopg2.errors.UniqueViolation error.
+    This error is going to be raised if the user tries to add a book with an ISBN that already exists in the database. 
+    The second except block is going to be used to catch the psy. The third 
+    except block is going to be used to catch any other exceptions that may occur.
+    The finally block is going to be used to close the connection to the database if it is not None. 
+    This is going to ensure that the connection to the database is closed even if an error occurs.
+    This is going to prevent any potential memory leaks or other issues that may arise from leaving the connection open."""
     try:
         connection = psycopg2.connect(
             dbname=get_env("DB_NAME"),
@@ -236,7 +256,15 @@ def get_book_database():
     finally:
         if connection is not None:
             connection.close()
-
+"""The intention behind the search_title_by_word function is to allow for the user to search for a book by a specific word in the title. 
+The function is going to check if the title parameter is empty or not. If the title parameter is empty, there is going to be an HTTPException
+raised with a status code of 400 with the message of 'Title is required'. If the title paramter is not empty, then the function is going to check if there is a space in the title parameter. 
+If there is a space in the title parameter, then there is going to be an HTTPException raised with a status code of 400 with the message of 'Please provide only one word to search'.
+The function is going to make a connection to the database and initialize the cursor. 
+The cursor is going to execute the SELECT * FROM book_info WHERE book_title ILIKE %s ORDER BY book_title; command. 
+The % symbols are going to be used to indicate that the search pattern can be 
+anywhere in the book_title string. The cursor is going to fetch all of the results and return them as a dictionary with the query and books as the keys.
+"""
 @library_app.get("/books/search")
 def search_title_by_word(title: str):
     if not title or not title.strip():
@@ -246,9 +274,6 @@ def search_title_by_word(title: str):
         raise HTTPException(status_code=400, detail="Please provide only one word to search")
 
     connection = None
-
-    """The try-block is going to create a new connection to a new database session given
-    the database name, user, password, and the host, and port."""
     try:
         connection = psycopg2.connect(
             dbname=get_env("DB_NAME"),
@@ -267,12 +292,9 @@ def search_title_by_word(title: str):
         search_pattern = f"%{title}%"
         cursor.execute(query, (search_pattern,))
         results = cursor.fetchall()
-
-        return{"query": title, "books": results}
-
+        return {"query": title, "books": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
-
     finally:
         if connection is not None:
             connection.close()
@@ -378,18 +400,16 @@ def description_change(book_id: int, summary: Book_Description_Update):
     book["book_description"] = summary.book_description
     return Book_Description(**book)
 
-@library_app.get("/books/search")
-def search_title_by_word(title: str):
-    if not title or not title.strip():
-        raise HTTPException(status_code=400, detail="Title is required")
-    title = title.strip()
-    if " " in title:
-        raise HTTPException(status_code=400, detail="Please provide only one word to search")
+@library_app.get("/books/search/genre")
+def search_books_by_genre(genre: str):
+    if not genre or not genre.strip():
+        raise HTTPException(status_code=400, detail="Genre is required")
+    genre = genre.strip()
+    if " " in genre:
+        raise HTTPException(status_code=400, detail="Please provide only one word to search by genre")
 
     connection = None
 
-    """The try-block is going to create a new connection to a new database session given
-    the database name, user, password, and the host, and port."""
     try:
         connection = psycopg2.connect(
             dbname=get_env("DB_NAME"),
@@ -399,33 +419,63 @@ def search_title_by_word(title: str):
             port=int(get_env("DB_PORT"))
         )
         cursor = connection.cursor(cursor_factory=RealDictCursor)
-        """The query is going to be selecting all from the book info table where the 
-        title is the ILIKE is going to be the operator that is going to be used for
-        string pattern matching. This is also where the %s is coming in, the %s is a
-        string format specifier used as a placeholder to insert a value into a
-        string dynamically and then it's going to order the results by the book
-        title."""
-
         query = """ 
                 SELECT * 
                 FROM book_info 
-                WHERE book_title ILIKE %s 
+                WHERE genre ILIKE %s 
                 ORDER BY book_title;
         """
-
-        search_pattern = f"%{title}%"
+        search_pattern = f"%{genre}%"
         cursor.execute(query, (search_pattern,))
         results = cursor.fetchall()
 
-        return {"query": title, "books": results}
-    
+        return {"query": genre, "books": results}
     except Exception as e:
-        """This except block of code is utilizing the HTTPException. This is a
-        standard error class that is used in web frameworks to stop request processing
-        and return an HTTP error code to the client. Typically, in FastAPI, it's used
-        for raising errors. """
-        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Search by genre failed: {str(e)}")
+    finally:
+        if connection is not None:
+            connection.close()
 
+@library_app.get("/books/search/media_type")
+def search_books_by_media_type(media_type: str):
+    if not media_type or not media_type.strip():
+        raise HTTPException(status_code=400, detail="Media type is required")
+    media_type = media_type.strip()
+    if " " in media_type:
+        raise HTTPException(status_code=400, detail="Please provide only one word to search by media type")
+
+    connection = None
+
+    try:
+        connection = psycopg2.connect(
+            dbname=get_env("DB_NAME"),
+            user=get_env("DB_USER"),
+            password=get_env("DB_PASSWORD"),
+            host=get_env("DB_HOST"),
+            port=int(get_env("DB_PORT"))
+        )
+        cursor = connection.cursor(cursor_factory=RealDictCursor)
+        query = """ 
+                SELECT * 
+                FROM book_info 
+                WHERE media_type ILIKE %s 
+                ORDER BY book_title;
+        """
+        # the search pattern is going to be a string that is going to be 
+        # used to serach for the media type in the database. The % symbols 
+        # are going to be used to indicate that the search pattern can be anywwhere
+        # in the media type string. The % symbols are going to be used to indicate 
+        # that the search pattern can be anywhere in the media type string.
+        search_pattern = f"%{media_type}%"
+        cursor.execute(query, (search_pattern,))
+        results = cursor.fetchall()
+
+        return {"query": media_type, "books": results}
+    except Exception as e:
+        # This except block is going to be similar to the other search functions, 
+        # but the difference is that this one is going to be searching by media type. 
+        # The exception is going to be raised if there is an error with the search by media type.
+        raise HTTPException(status_code=500, detail=f"Search by media type failed: {str(e)}")
     finally:
         if connection is not None:
             connection.close()
@@ -454,15 +504,3 @@ def setup_test_env():
     yield
     os.environ["TESTING"] = "False"
 """
-
-
-
-# def test_get_books():
-#     #Tests the database integration endpoint
-#     client = TestClient(library_app)
-#     response = client.get("/books")
-
-#     #Assertions depend on test DB state, if the DB table exists, it will return 200
-#     assert response.status_code in [200, 500]
-#     if response.status_code == 200:
-#         assert "books" in response.json()

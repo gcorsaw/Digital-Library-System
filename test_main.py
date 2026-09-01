@@ -156,3 +156,25 @@ def test_title_search_missing_query():
 
     #This assert will return a 422 error if the title is missing as the query parameters require title
     assert response.status_code == 422
+
+def test_media_type_search():
+    client = TestClient(library_app)
+    response = client.get("/books/search/media_type?media_type=ebook")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "query" in data
+    assert "books" in data
+    assert isinstance(data["books"], list)
+    assert data["query"] == "ebook"
+
+def test_media_type_search_no_results():
+    client = TestClient(library_app)
+    response = client.get("/books/search/media_type?media_type=notarealmediatype")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "query" in data
+    assert "books" in data
+    assert isinstance(data["books"], list)
+    assert data["query"] == "notarealmediatype"
