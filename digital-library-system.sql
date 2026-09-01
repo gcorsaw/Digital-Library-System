@@ -4,13 +4,13 @@ create table author_info(
 	last_name VARCHAR(50)
 );
 
-create table media_info(
+create table book_info(
 	book_id INT generated always as identity primary key,	
 	book_isbn VARCHAR(20) unique,
 	book_title VARCHAR(255) not null,
 	author_id INT references author_info(author_id),
 	publish_date date,
-	genre_type VARCHAR(500),
+	genre VARCHAR(500),
 	media_type VARCHAR(500)
 );
 
@@ -22,7 +22,7 @@ create table reader_info(
 
 create table book_tracking(
 	user_id INT references reader_info(user_id) on delete cascade,
-	book_id INT references media_info(book_id) on delete cascade,
+	book_id INT references book_info(book_id) on delete cascade,
 	book_summary varchar(300),
 	book_ratings INT not null check (book_ratings between 1 and 5),
 	read_status boolean default false not null,
@@ -33,7 +33,7 @@ insert into author_info (first_name, last_name) values
 ('George', 'Orwell'),
 ('Jane', 'Austen');
 
-insert into media_info(book_isbn, book_title, author_id, publish_date, genre_type, media_type) values
+insert into book_info(book_isbn, book_title, author_id, publish_date, genre, media_type) values
 ('9780451524935', '1984', (select author_id from author_info where first_name='George' and last_name='Orwell'), 
 '1949-06-08', 'Dystopian Fiction, Political Fiction, Social Science fiction', 'Book/novel, Feature Film'),
 ('9780141439518', 'Pride and Prejudice', (select author_id from author_info where first_name='Jane' and last_name='Austen'), 
@@ -47,21 +47,21 @@ insert into reader_info (username, is_offline) values
 insert into book_tracking(user_id, book_id, book_summary, book_ratings, read_status) values
 (
 	(select user_id from reader_info where username = 'grace_reads'),
-	(select book_id from media_info where book_isbn = '9780451524935'),
+	(select book_id from book_info where book_isbn = '9780451524935'),
 	'A chilling look at totalitarian surveillance.', 5, true
 ),
 (
 	(select user_id from reader_info where username = 'booklover42'),
-	(select book_id from media_info where book_isbn = '9780141439518'),
+	(select book_id from book_info where book_isbn = '9780141439518'),
 	'Wit, romance, and social commentary done right.', 5, true
 );
 
 select * from author_info;
-select * from media_info;
+select * from book_info;
 select * from reader_info;
 select * from book_tracking;
 
 drop table if exists book_tracking;
-drop table if exists media_info;
+drop table if exists book_info;
 drop table if exists reader_info;
 drop table if exists author_info;
