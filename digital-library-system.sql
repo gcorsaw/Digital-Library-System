@@ -13,10 +13,14 @@ create table book_info(
 	book_id INT generated always as identity primary key,
 	book_isbn VARCHAR(20) unique,
 	book_title VARCHAR(255) not null,
-	author_id INT references author_info(author_id),
 	publish_date date
 );
 
+create table book_author(
+	book_id INT references book_info(book_id) on delete cascade,
+	author_id INT references author_info(author_id) on delete cascade,
+	primary key (book_id, author_id)
+);
 -- this table is going to allow for users to generate a unique user ID and username, 
 -- as well as a boolean value to indicate whether or not the user has enabled 
 -- offline synchronization for their reading progress.
@@ -66,18 +70,24 @@ create table book_media_type(
 	media_type_id INT references media_type(media_type_id) on delete cascade,
 	primary key (book_id, media_type_id)
 );
+insert into book_info(book_isbn, book_title, publish_date) values
+('9780451524935', '1984', '1949-06-08'),
+('9780141439518', 'Pride and Prejudice', '1813-01-28'),
+('9780060853983', 'Good Omens', '1990-05-01');
 
 insert into author_info (first_name, last_name) values
 ('George', 'Orwell'),
-('Jane', 'Austen');
+('Jane', 'Austen'),
+('Terry', 'Pratchett'),
+('Neil', 'Gaiman');
 
-insert into book_info(book_isbn, book_title, author_id, publish_date) values
-('9780451524935', '1984',
-	(select author_id from author_info where first_name='George' and last_name='Orwell'),
-	'1949-06-08'),
-('9780141439518', 'Pride and Prejudice',
-	(select author_id from author_info where first_name='Jane' and last_name='Austen'),
-	'1813-01-28');
+insert into book_author (book_id, author_id)
+select b.book_id, a.author_id
+from book_info b
+join author_info a on
+	(b.book_isbn = '9780451524935' and a.first_name='George' and a.last_name='Orwell')
+	or (b.book_isbn = '9780141439518' and a.first_name='Jane' and a.last_name='Austen')
+	or (b.book_isbn = '9780060853983' and a.first_name in ('Terry','Neil'));
 
 insert into genre (genre_name) values
 ('Dystopian Fiction'), ('Political Fiction'), ('Social Science Fiction'),
@@ -115,8 +125,9 @@ select * from book_info;
 select * from reader_info;
 select * from book_tracking;
 select * from genre;
-select * from book_genre;   
+select * from book_genre;
 select * from media_type;
+select * from book_author;
 
 drop table if exists book_tracking;
 drop table if exists book_genre;
@@ -126,3 +137,4 @@ drop table if exists media_type;
 drop table if exists book_info;
 drop table if exists reader_info;
 drop table if exists author_info;
+drop table if exists book_author;
