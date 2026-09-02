@@ -72,10 +72,10 @@ CREATE TABLE book_media_type (
 );
 
 
-CREATE INDEX idx_book_author_author_id ON book_author(author_id);
-CREATE INDEX idx_book_genre_genre_id ON book_genre(genre_id);
-CREATE INDEX idx_book_media_type_media_type_id ON book_media_type(media_type_id);
-CREATE INDEX idx_book_tracking_book_id ON book_tracking(book_id);
+CREATE INDEX index_book_author_author_id ON book_author(author_id);
+CREATE INDEX index_book_genre_genre_id ON book_genre(genre_id);
+CREATE INDEX index_book_media_type_media_type_id ON book_media_type(media_type_id);
+CREATE INDEX index_book_tracking_book_id ON book_tracking(book_id);
 
 INSERT INTO book_info(book_isbn, book_title, publish_date) VALUES 
 ('9780451524935', '1984', '1949-06-08'),
