@@ -25,7 +25,7 @@ CREATE TABLE book_info (
 CREATE TABLE book_author (
     book_id INT REFERENCES book_info(book_id) ON DELETE CASCADE,
     author_id INT REFERENCES author_info(author_id) ON DELETE CASCADE,
-    PRIMARY KEY (book_id, author_id)
+    PRIMARY KEY (book_id, author_id)  -- This is going to allow for multi-author configurations for books
 );
 
 CREATE TABLE reader_info (
