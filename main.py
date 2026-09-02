@@ -179,14 +179,22 @@ def user_add_book(book: Book):
         )
         cursor = connection.cursor(cursor_factory=RealDictCursor)
         query = """
-        insert into book_info(book_isbn, book_title, author_id, publish_date)
-        values (%s, %s, %s, %s) 
-        RETURNING *
+        INSERT INTO book_info(book_isbn, book_title, publish_date)
+        VALUES (%s, %s, %s)
+        RETURNING *;
         """
         cursor.execute(
-            query, (book.book_isbn, book.book_title, book.author_id, book.publish_date)
+            query, (book.book_isbn, book.book_title, book.publish_date)
         )
         new_book = cursor.fetchone()
+
+        if book.author_id is not None:
+            cursor.execute(
+                "INSERT INTO book_author(book_id, author_id) VALUES (%s, %s);",
+                (new_book["book_id"], book.author_id),
+            )
+            new_book["author_id"] = book.author_id
+
         connection.commit()
 
         return {"message": "Book added successfully", "book": new_book}
@@ -317,7 +325,21 @@ def get_single_book_endpoint(book_id: int):
         )
         cursor = connection.cursor(cursor_factory=RealDictCursor)
 
-        cursor.execute("SELECT * FROM book_info WHERE book_id = %s;", (book_id,))
+        cursor.execute(
+            """
+            SELECT b.*, ba.author_id
+            FROM book_info AS b
+            LEFT JOIN LATERAL (
+                SELECT author_id
+                FROM book_author
+                WHERE book_id = b.book_id
+                ORDER BY author_id
+                LIMIT 1
+            ) AS ba ON TRUE
+            WHERE b.book_id = %s;
+            """,
+            (book_id,),
+        )
         book = cursor.fetchone()
         cursor.close()
 
@@ -419,11 +441,13 @@ def search_books_by_genre(genre: str):
             port=int(get_env("DB_PORT"))
         )
         cursor = connection.cursor(cursor_factory=RealDictCursor)
-        query = """ 
-                SELECT * 
-                FROM book_info 
-                WHERE genre ILIKE %s 
-                ORDER BY book_title;
+        query = """
+            SELECT DISTINCT b.*, g.genre_name AS genre
+            FROM book_info AS b
+            JOIN book_genre AS bg ON bg.book_id = b.book_id
+            JOIN genre AS g ON g.genre_id = bg.genre_id
+            WHERE g.genre_name ILIKE %s
+            ORDER BY b.book_title;
         """
         search_pattern = f"%{genre}%"
         cursor.execute(query, (search_pattern,))
@@ -435,7 +459,22 @@ def search_books_by_genre(genre: str):
     finally:
         if connection is not None:
             connection.close()
-
+"""
+The seach_book_media_type function is going to be used to search for the books by their media type. 
+The function is going to check to see if the media_type parameter is empty or not. If the media_type
+parameter is empty, then there is going to be an HTTPException raised with a status code of 400
+with the message of 'Media type is required'. If the media_type parameter is not empty, then the
+function is going to check to see if there's a space in the media_type parameter. 
+If there is a space in the media_type parameter, then there's going to be an HTTPException
+raised with a status code of 400 and the message of 'Please provide only one word to seach by media type'.
+The function is going to make a connection tp the database and initializes the cursor. 
+The query is going to be initialized with the value of the select command that is going to be used to search for the books by their media type.
+The search pattern is going to be a string that is going to be used to search for the media type in the database. The % symbols
+are going t obe used to indicate that the search pattern can be anywhere in the media type string. The cursor is going to execute the 
+query with the search pattern as the parameter. The results are going to be fetched and returned as a dictionary with the query and books as the keys.
+In the except block, if there's an error, then it's going to raise an HTTPException with a status code of 500 and the message of 'Search by media type failed: {str(e)}'.
+In the finally block, if the connection is not None, then the connection is going to be closed. 
+"""
 @library_app.get("/books/search/media_type")
 def search_books_by_media_type(media_type: str):
     if not media_type or not media_type.strip():
@@ -455,11 +494,13 @@ def search_books_by_media_type(media_type: str):
             port=int(get_env("DB_PORT"))
         )
         cursor = connection.cursor(cursor_factory=RealDictCursor)
-        query = """ 
-                SELECT * 
-                FROM book_info 
-                WHERE media_type ILIKE %s 
-                ORDER BY book_title;
+        query = """
+            SELECT DISTINCT b.*, mt.media_type_name AS media_type
+            FROM book_info AS b
+            JOIN book_media_type AS bmt ON bmt.book_id = b.book_id
+            JOIN media_type AS mt ON mt.media_type_id = bmt.media_type_id
+            WHERE mt.media_type_name ILIKE %s
+            ORDER BY b.book_title;
         """
         # the search pattern is going to be a string that is going to be 
         # used to serach for the media type in the database. The % symbols 
@@ -476,6 +517,106 @@ def search_books_by_media_type(media_type: str):
         # but the difference is that this one is going to be searching by media type. 
         # The exception is going to be raised if there is an error with the search by media type.
         raise HTTPException(status_code=500, detail=f"Search by media type failed: {str(e)}")
+    finally:
+        if connection is not None:
+            connection.close()
+"""
+This function is going to search in the book database and it'll specifically search for books by their genre. 
+The function is going to check to see if the genre parameter is empty or not. If the genre parameter is empty, then
+it'll return a HTTPException with a status code of 400 and the message of 'Book genre is required'. 
+If the genre parameter is not empty, then the function is going to check to see if there's a space in the genre parameter.
+The next portion of the function is going to behave similarly to the other search functions. The try block is going to 
+attempt to make a connection to the database and initialize the cursor using the RealDictCursor.
+The query is then going to be store the responses of the 
+SELECT DISTINCT b.*, g.genre_name AS genre FROM book_info AS b JOIN book_genre AS bg ON bg.book_id = b.book_id JOIN genre AS g ON 
+g.genre_id = bg.genre_id WHERE g.genre_name ILIKE %s ORDER BY b.book_title; command.
+The search pattern then is going to be initialized with the value of f"%{book_genre}%" 
+and the cursor is going to execute the query with the search pattern as a parameter.
+The results are then going to be fetched and returned as a dictionary with the query and books as
+the keys. In the except block, if there's an error, it's going to then raise an HTTPException with 
+a status code of 500 and the message of 'Search by book genre failed: {str(e)}'. 
+In the finally block, if the connection is not None, then the connection is going to be closed.
+"""
+@library_app.get("/books/search/book_genre")
+def search_books_by_genre(genre: str):
+    if not genre or not genre.strip():
+        raise HTTPException(status_code=400, detail="Book genre is required")
+    book_genre = genre.strip()
+    if " " in book_genre:
+        raise HTTPException(status_code=400, detail="Please provide only one word to search by book genre")
+    connection = None
+    try:
+        connection = psycopg2.connect(
+            dbname=get_env("DB_NAME"),
+            user=get_env("DB_USER"),
+            password=get_env("DB_PASSWORD"),
+            host=get_env("DB_HOST"),
+            port=int(get_env("DB_PORT"))
+        )
+        cursor = connection.cursor(cursor_factory=RealDictCursor)
+        query = """
+            SELECT DISTINCT b.*, g.genre_name AS genre
+            FROM book_info AS b
+            JOIN book_genre AS bg ON bg.book_id = b.book_id
+            JOIN genre AS g ON g.genre_id = bg.genre_id
+            WHERE g.genre_name ILIKE %s
+            ORDER BY b.book_title;
+        """
+        search_pattern = f"%{book_genre}%"
+        cursor.execute(query, (search_pattern,))
+        results = cursor.fetchall()
+
+        return {"query": book_genre, "books": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search by book genre failed: {str(e)}")
+    finally:
+        if connection is not None:
+            connection.close()
+"""
+This function is going to be used to search for books by author.
+The function is going to check to see if the author parameter is empty or not. If
+the author parameter is empty, then there is going to be an HTTPException raised 
+with a status code of 400 with the message of 'Author name is required'.
+If the other paramter is satisfied, then the function is going to check to see if
+there's a space in the author parameter. If there is a space in the author parameter, 
+then there is going to be an HTTPException raised with a 
+status code of 400 with the message of 'Please provide only one word to search 
+by author name'. 
+"""
+@library_app.get("/books/search/author")
+def search_books_by_author(author: str):
+    if not author or not author.strip():
+        raise HTTPException(status_code=400, detail="Author name is required")
+    author_name = author.strip()
+    if " " in author_name:
+        raise HTTPException(status_code=400, detail="Please provide only one word to search by author name")
+    connection = None
+    try:
+        connection = psycopg2.connect(
+            dbname=get_env("DB_NAME"),
+            user=get_env("DB_USER"),
+            password=get_env("DB_PASSWORD"),
+            host=get_env("DB_HOST"),
+            port=int(get_env("DB_PORT"))
+        )
+        cursor = connection.cursor(cursor_factory=RealDictCursor)
+        query = """
+            SELECT DISTINCT
+                b.*,
+                CONCAT_WS(' ', a.first_name, a.last_name) AS author
+            FROM book_info AS b
+            JOIN book_author AS ba ON ba.book_id = b.book_id
+            JOIN author_info AS a ON a.author_id = ba.author_id
+            WHERE CONCAT_WS(' ', a.first_name, a.last_name) ILIKE %s
+            ORDER BY b.book_title;
+        """
+        search_pattern = f"%{author_name}%"
+        cursor.execute(query, (search_pattern,))
+        results = cursor.fetchall()
+
+        return {"query": author_name, "books": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search by author failed: {str(e)}")
     finally:
         if connection is not None:
             connection.close()

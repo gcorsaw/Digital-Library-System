@@ -178,3 +178,67 @@ def test_media_type_search_no_results():
     assert "books" in data
     assert isinstance(data["books"], list)
     assert data["query"] == "notarealmediatype"
+
+def test_genre_search():
+    client = TestClient(library_app)
+    response = client.get("/books/search/genre?genre=fiction")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "query" in data
+    assert "books" in data
+    assert isinstance(data["books"], list)
+    assert data["query"] == "fiction"
+
+def test_book_genre_search():
+    client = TestClient(library_app)
+    response = client.get("/books/search/genre?genre=non-fiction")
+    assert response.status_code == 200
+    data = response.json()
+    assert "query" in data
+    assert "books" in data
+    assert isinstance(data["books"], list)
+    assert data["query"] == "non-fiction"
+
+def test_genre_search_no_results():
+    client = TestClient(library_app)
+    response = client.get("/books/search/genre?genre=notarealgenre")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "query" in data
+    assert "books" in data
+    assert isinstance(data["books"], list)
+    assert data["query"] == "notarealgenre"
+
+def test_book_genre_search_no_results():
+    client = TestClient(library_app)
+    response = client.get("/books/search/genre?genre=notarealgenre")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "query" in data
+    assert "books" in data
+    assert isinstance(data["books"], list)
+    assert data["query"] == "notarealgenre"
+
+def test_author_search():
+    client = TestClient(library_app)
+    response = client.get("/books/search/author?author=king")
+    assert response.status_code == 200
+    data = response.json()
+    assert "query" in data
+    assert "books" in data
+    assert isinstance(data["books"], list)
+    assert data["query"] == "king"
+
+def test_author_search_no_results():
+    client = TestClient(library_app)
+    response = client.get("/books/search/author?author=notarealauthor")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "query" in data
+    assert "books" in data
+    assert isinstance(data["books"], list)
+    assert data["query"] == "notarealauthor"
