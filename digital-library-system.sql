@@ -1,9 +1,14 @@
+-- this table is going to generate a unique author ID for each author that the 
+-- user adds to the database, as well as store the author's first and last name.
 create table author_info(
 	author_id INT generated always as identity primary key,
 	first_name VARCHAR(50),
 	last_name VARCHAR(50)
 );
 
+-- this table is going to generate a unique book ID for each book, as well as 
+-- store the book's ISBN, title, author ID (which references the author_info table), 
+-- and publish date.
 create table book_info(
 	book_id INT generated always as identity primary key,
 	book_isbn VARCHAR(20) unique,
@@ -12,12 +17,17 @@ create table book_info(
 	publish_date date
 );
 
+-- this table is going to allow for users to generate a unique user ID and username, 
+-- as well as a boolean value to indicate whether or not the user has enabled 
+-- offline synchronization for their reading progress.
 create table reader_info(
 	user_id INT generated always as identity primary key,
 	username VARCHAR(50) unique not null,
 	offline_sync_enabled boolean default true
 );
 
+-- this table is going to allow for users to track their reading progress, including 
+-- the books they have read, their ratings, and their current reading status.
 create table book_tracking(
 	user_id INT references reader_info(user_id) on delete cascade,
 	book_id INT references book_info(book_id) on delete cascade,
@@ -28,22 +38,29 @@ create table book_tracking(
 	primary key (user_id, book_id)
 );
 
+-- this table is going to establish a way for books to be categorized into genres, 
+-- allowing for multiple genres to be associated with a single book and vice versa.
 create table genre(
 	genre_id INT generated always as identity primary key,
 	genre_name VARCHAR(50) unique not null
 );
 
+-- This table is going to allow for users to add genres to books, establishing a 
+-- many-to-many relationship between books and genres.
 create table book_genre(
 	book_id INT references book_info(book_id) on delete cascade,
 	genre_id INT references genre(genre_id) on delete cascade,
 	primary key (book_id, genre_id)
 );
-
+-- This table is going to allow for the categorization of books into different media types, 
+--such as print, digital, or audio formats.
 create table media_type(
 	media_type_id INT generated always as identity primary key,
 	media_type_name VARCHAR(50) unique not null
 );
 
+-- This table establishes a many-to-many relationship between books and media types, 
+-- allowing for multiple media types to be associated with a single book and vice versa.
 create table book_media_type(
 	book_id INT references book_info(book_id) on delete cascade,
 	media_type_id INT references media_type(media_type_id) on delete cascade,
