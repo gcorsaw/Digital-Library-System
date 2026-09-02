@@ -35,9 +35,24 @@ CREATE TABLE reader_info (
     password_hash VARCHAR(255) NOT NULL,
     external_auth_id VARCHAR(255) UNIQUE,
     offline_sync_enabled BOOLEAN DEFAULT TRUE,
+    -- The timestampz command is used to store the time stamp with the timezone information.
+    -- This is important for tracking when the user was created and when they last updated their information,
+    -- this will also provide the time and date of when the user was created their information in the system.
+    -- then the default value is set to the current time and date when the user is created in the system.
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
+/*
+Similar to the reader_info table, the book_tracking table utilizes the timestampz
+command to store the date and the time of when the book was added to the user's list.
+This table will also update the timestampz when the user updates their book information,
+this would include whether they're updating the book summary, the book ratings, or the read status of the book.
+Both of these two new parts of the table will allow for the system to track when the user last updated their book 
+information, and when they added the book to their list.
+The system will also allow for the user to track their reading progress, and the system will be able to provide
+the user with a history of their reading progress. The primary key for this table contains
+both a user_id and a book_id, this is to ensure that the user can only have one
+entry for each book in their list. 
+*/
 CREATE TABLE book_tracking (
     user_id INT REFERENCES reader_info(user_id) ON DELETE CASCADE,
     book_id INT REFERENCES book_info(book_id) ON DELETE CASCADE,
