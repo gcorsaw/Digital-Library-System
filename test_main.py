@@ -91,8 +91,8 @@ def test_book_details_returns_expected_fields():
 
 def test_search_details_invalid_id_type():
     client = TestClient(library_app)
-    response = client.get("/book/abc")
-    assert response.status_code == 404
+    response = client.get("/books/abc")
+    assert response.status_code == 422
     assert "detail" in response.json()
 
 def test_search_info_success():
@@ -103,20 +103,18 @@ def test_search_info_success():
     assert "books" in search_info
     assert isinstance(search_info["books"], list)
 
-def test_description_change_updates_dummy_book():
+def test_description_change_updates_book():
     client = TestClient(library_app)
-
-    client.post("/books/dummy")
     response = client.put(
         "/books/1/description",
-        json={"book_description": "Updated description for Hollow."},
+        json={"book_description": "Updated description for 1984."},
     )
 
     assert response.status_code == 200
     data = response.json()
     assert data["book_id"] == 1
-    assert data["book_title"] == "Hollow"
-    assert data["book_description"] == "Updated description for Hollow."
+    assert data["book_title"] == "1984"
+    assert data["book_description"] == "Updated description for 1984."
 
 def test_description_change_returns_404_for_missing_books():
     client = TestClient(library_app)
@@ -179,9 +177,9 @@ def test_media_type_search_no_results():
     assert isinstance(data["books"], list)
     assert data["query"] == "notarealmediatype"
 
-def test_genre_search():
+def test_book_genre_search():
     client = TestClient(library_app)
-    response = client.get("/books/search/genre?genre=fiction")
+    response = client.get("/books/search/book_genre?genre=fiction")
     assert response.status_code == 200
     data = response.json()
 
@@ -190,30 +188,9 @@ def test_genre_search():
     assert isinstance(data["books"], list)
     assert data["query"] == "fiction"
 
-def test_book_genre_search():
-    client = TestClient(library_app)
-    response = client.get("/books/search/genre?genre=non-fiction")
-    assert response.status_code == 200
-    data = response.json()
-    assert "query" in data
-    assert "books" in data
-    assert isinstance(data["books"], list)
-    assert data["query"] == "non-fiction"
-
-def test_genre_search_no_results():
-    client = TestClient(library_app)
-    response = client.get("/books/search/genre?genre=notarealgenre")
-    assert response.status_code == 200
-    data = response.json()
-
-    assert "query" in data
-    assert "books" in data
-    assert isinstance(data["books"], list)
-    assert data["query"] == "notarealgenre"
-
 def test_book_genre_search_no_results():
     client = TestClient(library_app)
-    response = client.get("/books/search/genre?genre=notarealgenre")
+    response = client.get("/books/search/book_genre?genre=notarealgenre")
     assert response.status_code == 200
     data = response.json()
 
@@ -242,3 +219,76 @@ def test_author_search_no_results():
     assert "books" in data
     assert isinstance(data["books"], list)
     assert data["query"] == "notarealauthor"
+
+def test_get_book_summaries():
+    client = TestClient(library_app)
+
+    response = client.get("/books/summaries")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "books" in data
+    assert isinstance(data["books"], list)
+
+    if data["books"]:
+        assert "book_id" in data["books"][0]
+        assert "book_title" in data["books"][0]
+
+def test_get_book_info():
+    client = TestClient(library_app)
+
+    response = client.get("/books/info")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "books" in data
+    assert isinstance(data["books"], list)
+
+def test_book_genre_search_requires_genre():
+    client = TestClient(library_app)
+
+    response = client.get("/books/search/book_genre")
+
+    assert response.status_code == 422
+
+def test_book_genre_search_rejects_multiple_words():
+    client = TestClient(library_app)
+
+    response = client.get(
+        "/books/search/book_genre?genre=science%20fiction"
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Please provide only one word to search by book genre"
+    )
+
+def test_comic_search():
+    client = TestClient(library_app)
+
+    response = client.get("/comics/search?comic=batman")
+
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "comic_books" in data
+    assert isinstance(data["comic_books"], list)
+
+def test_comic_search_requires_title():
+    client = TestClient(library_app)
+
+    response = client.get("/comics/search")
+
+    assert response.status_code == 422
+
+def test_comic_search_rejects_multiple_words():
+    client = TestClient(library_app)
+
+    response = client.get(
+        "/comics/search?comic=spider%20man"
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Please provide only one word to search by comic book title"
+    )

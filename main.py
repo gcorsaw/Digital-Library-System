@@ -157,7 +157,8 @@ class Book(BaseModel):
     book_isbn: str
     book_title: str
     author_id: int | None = None
-    publish_date: date | None = None 
+    creator_role: str | None = "Author"
+    publish_date: date | None = None
 
 @library_app.post("/books", status_code=status.HTTP_201_CREATED)
 def user_add_book(book: Book):
@@ -175,7 +176,7 @@ def user_add_book(book: Book):
             user = get_env("DB_USER"),
             password = get_env("DB_PASSWORD"),
             host = get_env("DB_HOST"),
-            port=int(get_env("DB_PORT"))
+            port= int(get_env("DB_PORT"))
         )
         cursor = connection.cursor(cursor_factory=RealDictCursor)
         query = """
@@ -190,11 +191,11 @@ def user_add_book(book: Book):
 
         if book.author_id is not None:
             cursor.execute(
-                "INSERT INTO book_author(book_id, author_id) VALUES (%s, %s);",
-                (new_book["book_id"], book.author_id),
+                "INSERT INTO book_author(book_id, author_id, creator_role) VALUES (%s, %s, %s);",
+                (new_book["book_id"], book.author_id, book.creator_role),
             )
             new_book["author_id"] = book.author_id
-
+            new_book["creator_role"] = book.creator_role
         connection.commit()
 
         return {"message": "Book added successfully", "book": new_book}
@@ -394,68 +395,36 @@ class Book_Description(BaseModel):
     book_title: str
     book_description: str | None = None
 
-def create_dummy_book_table():
-        return{
-            1: {
-                "book_id": 1,
-                "book_title": "Hollow",
-                "book_description": "A book about survival in a dangerous forest determined to survive.",
-            },
-            2: {
-                "book_id": 2,
-                "book_title": "Never Keep",
-                "book_description": "A book involving magic, friendship, and enemies to lovers",
-            },
-        }
-
-dummy_books = create_dummy_book_table()
-
 class Book_Description_Update(BaseModel):
     book_description: str
 
 @library_app.put("/books/{book_id}/description", response_model=Book_Description)
 def description_change(book_id: int, summary: Book_Description_Update):
-    book = dummy_books.get(book_id)
-    if book is None:
-        raise HTTPException(status_code=404, detail="Book not found")
-
-    book["book_description"] = summary.book_description
-    return Book_Description(**book)
-
-@library_app.get("/books/search/genre")
-def search_books_by_genre(genre: str):
-    if not genre or not genre.strip():
-        raise HTTPException(status_code=400, detail="Genre is required")
-    genre = genre.strip()
-    if " " in genre:
-        raise HTTPException(status_code=400, detail="Please provide only one word to search by genre")
-
     connection = None
-
     try:
         connection = psycopg2.connect(
-            dbname=get_env("DB_NAME"),
-            user=get_env("DB_USER"),
-            password=get_env("DB_PASSWORD"),
-            host=get_env("DB_HOST"),
-            port=int(get_env("DB_PORT"))
+                dbname=get_env("DB_NAME"),
+                user=get_env("DB_USER"),
+                password=get_env("DB_PASSWORD"),
+                host=get_env("DB_HOST"),
+                port=int(get_env("DB_PORT"))
         )
         cursor = connection.cursor(cursor_factory=RealDictCursor)
-        query = """
-            SELECT DISTINCT b.*, g.genre_name AS genre
-            FROM book_info AS b
-            JOIN book_genre AS bg ON bg.book_id = b.book_id
-            JOIN genre AS g ON g.genre_id = bg.genre_id
-            WHERE g.genre_name ILIKE %s
-            ORDER BY b.book_title;
-        """
-        search_pattern = f"%{genre}%"
-        cursor.execute(query, (search_pattern,))
-        results = cursor.fetchall()
-
-        return {"query": genre, "books": results}
+        cursor.execute(
+            "UPDATE book_info SET book_description = %s WHERE book_id = %s RETURNING book_id, book_title, book_description;",
+            (summary.book_description, book_id),
+        )
+        updated_book = cursor.fetchone()
+        if updated_book is None:
+            raise HTTPException(status_code = 404, detail= "Book not found")
+        connection.commit()
+        return Book_Description(**updated_book)
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Search by genre failed: {str(e)}")
+        if connection is not None:
+            connection.rollback()
+        raise HTTPException (status_code=500, detail=f"Could not update description: {str(e)}")
     finally:
         if connection is not None:
             connection.close()
@@ -538,7 +507,7 @@ a status code of 500 and the message of 'Search by book genre failed: {str(e)}'.
 In the finally block, if the connection is not None, then the connection is going to be closed.
 """
 @library_app.get("/books/search/book_genre")
-def search_books_by_genre(genre: str):
+def search_books_by_book_genre(genre: str):
     if not genre or not genre.strip():
         raise HTTPException(status_code=400, detail="Book genre is required")
     book_genre = genre.strip()
@@ -621,6 +590,46 @@ def search_books_by_author(author: str):
         if connection is not None:
             connection.close()
 
+@library_app.get("/comics/search")
+def get_comic_book_from_database(comic: str):
+    if not comic or not comic.strip():
+        raise HTTPException(status_code=400, detail="Comic book title is required")
+    comic_book = comic.strip()
+    if " " in comic_book:
+        raise HTTPException(status_code=400, detail="Please provide only one word to search by comic book title")
+    connection = None
+    try:
+        connection = psycopg2.connect(
+            dbname=get_env("DB_NAME"),
+            user=get_env("DB_USER"),
+            password=get_env("DB_PASSWORD"),
+            host=get_env("DB_HOST"),
+            port=int(get_env("DB_PORT"))
+        )
+        cursor = connection.cursor(cursor_factory=RealDictCursor)
+        query = """
+            SELECT DISTINCT b.*, g.genre_name AS genre, mt.media_type_name AS media_type
+            FROM book_info AS b
+            LEFT JOIN book_genre AS bg ON bg.book_id = b.book_id
+            LEFT JOIN genre AS g ON g.genre_id = bg.genre_id
+            LEFT JOIN book_media_type AS bmt ON bmt.book_id = b.book_id
+            LEFT JOIN media_type AS mt ON mt.media_type_id = bmt.media_type_id
+            WHERE b.book_title ILIKE %s
+            ORDER BY b.book_title;
+        """
+        search_pattern = f"%{comic_book}%"
+        cursor.execute(query, (search_pattern,))
+        comic_book_results = cursor.fetchall()
+        cursor.close()
+        return {"comic_books": comic_book_results}
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(error)
+        raise HTTPException(status_code=500, detail=str(error))
+    finally:
+        if connection is not None:
+            connection.close()
+            print('Database connection closed.')
+
 def main():
     print("Hello from digital-library-system!")
     # connect()
@@ -631,8 +640,8 @@ def main():
     read_root()
 
 if __name__ == "__main__":
-    uvicorn.run(library_app, host="0.0.0.0", port=8000)
     main()
+    uvicorn.run(library_app, host="0.0.0.0", port=8000)
 
 """
 @pytest.fixture(autouse=True)
