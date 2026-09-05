@@ -192,6 +192,8 @@ UPDATE book_info
 SET publisher = 'William Morrow', edition = 'International Edition' 
 WHERE book_isbn = '9780060853983';
 
+ALTER TABLE book_info ADD COLUMN book_description VARCHAR(1000);
+
 SELECT * FROM author_info;
 SELECT * FROM book_info;
 SELECT * FROM reader_info;
