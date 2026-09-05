@@ -21,13 +21,16 @@ CREATE TABLE book_info (
     book_title VARCHAR(255) NOT NULL,
     publish_date DATE,
     publisher VARCHAR(255),
-    edition VARCHAR(50)
+    edition VARCHAR(50),
+    issue_number VARCHAR(50) default null,
+    volume_number INT default null
 );
 
 CREATE TABLE book_author (
     book_id INT REFERENCES book_info(book_id) ON DELETE CASCADE,
     author_id INT REFERENCES author_info(author_id) ON DELETE CASCADE,
-    PRIMARY KEY (book_id, author_id)  -- This is going to allow for multi-author configurations for books
+    creator_role VARCHAR(50) not null check (creator_role in ('Writer', 'Penciler', 'Inker', 'Colorist', 'Letterer', 'Cover Artist', 'Author')),
+    PRIMARY KEY (book_id, author_id, creator_role)  -- This is going to allow for multi-author configurations for books
 );
 
 CREATE TABLE reader_info (
@@ -37,10 +40,12 @@ CREATE TABLE reader_info (
     password_hash VARCHAR(255) NOT NULL,
     external_auth_id VARCHAR(255) UNIQUE,
     offline_sync_enabled BOOLEAN DEFAULT TRUE,
-    -- The timestampz command is used to store the time stamp with the timezone information.
-    -- This is important for tracking when the user was created and when they last updated their information,
-    -- this will also provide the time and date of when the user was created their information in the system.
-    -- then the default value is set to the current time and date when the user is created in the system.
+    /*
+     The timestampz command is used to store the time stamp with the timezone information.
+     This is important for tracking when the user was created and when they last updated their information,
+     this will also provide the time and date of when the user was created their information in the system.
+     then the default value is set to the current time and date when the user is created in the system.
+    */
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 /*
@@ -79,7 +84,7 @@ CREATE TABLE book_genre (
 
 CREATE TABLE media_type (
     media_type_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    media_type_name VARCHAR(50) UNIQUE NOT NULL
+    media_type_name VARCHAR(50) UNIQUE NOT null
 );
 
 CREATE TABLE book_media_type (
@@ -88,57 +93,79 @@ CREATE TABLE book_media_type (
     PRIMARY KEY (book_id, media_type_id)
 );
 
-
 CREATE INDEX index_book_author_author_id ON book_author(author_id);
 CREATE INDEX index_book_genre_genre_id ON book_genre(genre_id);
 CREATE INDEX index_book_media_type_media_type_id ON book_media_type(media_type_id);
 CREATE INDEX index_book_tracking_book_id ON book_tracking(book_id);
 
-INSERT INTO book_info (book_isbn, book_title, publish_date, publisher, edition) VALUES 
-('9780451524935', '1984', '1949-06-08', 'Signet Classic', 'Centennial Edition'),
-('9780141439518', 'Pride and Prejudice', '1813-01-28', 'Penguin Classics', 'Deluxe Edition'),
-('9780060853983', 'Good Omens', '1990-05-01', 'William Morrow', 'International Edition');
+INSERT INTO book_info (book_isbn, book_title, publish_date, publisher, edition, issue_number, volume_number) VALUES 
+('9780451524935', '1984', '1949-06-08', 'Signet Classic', 'Centennial Edition', NULL, NULL),
+('9780141439518', 'Pride and Prejudice', '1813-01-28', 'Penguin Classics', 'Deluxe Edition', NULL, NULL),
+('9780060853983', 'Good Omens', '1990-05-01', 'William Morrow', 'International Edition', NULL, NULL),
+('COMIC-BATMAN-V2-01', 'Batman: The Court of Owls', '2011-09-21', 'DC Comics', 'First Printing', '1', 2),
+('COMIC-WATCHMEN-01', 'Watchmen', '1986-09-01', 'DC Comics', 'First Printing', '1', 1);
 
 INSERT INTO author_info (first_name, last_name) VALUES 
 ('George', 'Orwell'),
 ('Jane', 'Austen'),
 ('Terry', 'Pratchett'),
-('Neil', 'Gaiman');
+('Neil', 'Gaiman'),
+('Scott', 'Snyder'),
+('Greg', 'Capullo'),
+('Alan', 'Moore'),
+('Dave', 'Gibbons');
 
-INSERT INTO book_author (book_id, author_id)
-SELECT b.book_id, a.author_id FROM book_info b 
-JOIN author_info a ON 
+-- Map creators explicitly to roles
+INSERT INTO book_author (book_id, author_id, creator_role)
+SELECT b.book_id, a.author_id, 'Author' FROM book_info b JOIN author_info a ON 
     (b.book_isbn = '9780451524935' AND a.first_name='George' AND a.last_name='Orwell') OR 
     (b.book_isbn = '9780141439518' AND a.first_name='Jane' AND a.last_name='Austen') OR 
     (b.book_isbn = '9780060853983' AND a.first_name IN ('Terry','Neil'));
 
+INSERT into book_author (book_id, author_id, creator_role)
+SELECT b.book_id, a.author_id, 'Writer' FROM book_info b JOIN author_info a ON 
+    (b.book_isbn = 'COMIC-BATMAN-V2-01' AND a.first_name='Scott' AND a.last_name='Snyder') OR
+    (b.book_isbn = 'COMIC-WATCHMEN-01' AND a.first_name='Alan' AND a.last_name='Moore');
+
+INSERT INTO book_author (book_id, author_id, creator_role)
+SELECT b.book_id, a.author_id, 'Penciler' FROM book_info b JOIN author_info a ON 
+    (b.book_isbn = 'COMIC-BATMAN-V2-01' AND a.first_name='Greg' AND a.last_name='Capullo') OR
+    (b.book_isbn = 'COMIC-WATCHMEN-01' AND a.first_name='Dave' AND a.last_name='Gibbons');
+
 INSERT INTO genre (genre_name) VALUES 
 ('Dystopian Fiction'), ('Political Fiction'), ('Social Science Fiction'), 
-('Fiction'), ('Satire'), ('Romance'), ('Novel of Manners'), ('Fantasy Comedy');
+('Fiction'), ('Satire'), ('Romance'), ('Novel of Manners'), ('Fantasy Comedy'),
+('Superhero'), ('Mystery');
 
 INSERT INTO book_genre (book_id, genre_id)
 SELECT b.book_id, g.genre_id FROM book_info b 
 JOIN genre g ON 
     (b.book_isbn = '9780451524935' AND g.genre_name IN ('Dystopian Fiction', 'Political Fiction', 'Social Science Fiction')) OR 
     (b.book_isbn = '9780141439518' AND g.genre_name IN ('Fiction', 'Satire', 'Romance', 'Novel of Manners')) OR 
-    (b.book_isbn = '9780060853983' AND g.genre_name IN ('Fiction', 'Satire', 'Fantasy Comedy'));
+    (b.book_isbn = '9780060853983' AND g.genre_name IN ('Fiction', 'Satire', 'Fantasy Comedy')) OR
+    (b.book_isbn = 'COMIC-BATMAN-V2-01' AND g.genre_name IN ('Superhero', 'Mystery')) OR
+    (b.book_isbn = 'COMIC-WATCHMEN-01' AND g.genre_name IN ('Superhero', 'Mystery', 'Dystopian Fiction'));
 
 INSERT INTO media_type (media_type_name) VALUES 
 ('Book/Novel'), ('Feature Film'), ('Television Series'), 
-('E-book'), ('Audiobook'), ('Online Text'), ('Print Novel');
+('E-book'), ('Audiobook'), ('Online Text'), ('Print Novel'),
+('Comic Book (Single Issue)'), ('Graphic Novel / Trade Paperback');
 
 INSERT INTO book_media_type (book_id, media_type_id)
 SELECT b.book_id, m.media_type_id FROM book_info b 
 JOIN media_type m ON 
     (b.book_isbn = '9780451524935' AND m.media_type_name IN ('Print Novel', 'E-book')) OR 
     (b.book_isbn = '9780141439518' AND m.media_type_name IN ('Print Novel', 'Audiobook')) OR 
-    (b.book_isbn = '9780060853983' AND m.media_type_name IN ('Print Novel', 'Television Series'));
+    (b.book_isbn = '9780060853983' AND m.media_type_name IN ('Print Novel', 'Television Series')) OR
+    (b.book_isbn = 'COMIC-BATMAN-V2-01' AND m.media_type_name IN ('Comic Book (Single Issue)')) OR
+    (b.book_isbn = 'COMIC-WATCHMEN-01' AND m.media_type_name IN ('Graphic Novel / Trade Paperback'));
 
 INSERT INTO reader_info (username, email, password_hash, offline_sync_enabled) VALUES 
 ('grace_reads', 'grace@example.com', '$2b$12$V7b...', false), 
 ('booklover42', 'lover42@example.com', '$2b$12$X9z...', true);
 
-INSERT INTO book_tracking(user_id, book_id, book_summary, book_ratings, read_status) VALUES (
+INSERT INTO book_tracking(user_id, book_id, book_summary, book_ratings, read_status) VALUES 
+(
     (SELECT user_id FROM reader_info WHERE username = 'grace_reads'),
     (SELECT book_id FROM book_info WHERE book_isbn = '9780451524935'),
     'A chilling look at totalitarian surveillance.', 5, 'finished'
@@ -147,8 +174,12 @@ INSERT INTO book_tracking(user_id, book_id, book_summary, book_ratings, read_sta
     (SELECT user_id FROM reader_info WHERE username = 'booklover42'),
     (SELECT book_id FROM book_info WHERE book_isbn = '9780141439518'),
     'Wit, romance, and social commentary done right.', 5, 'finished'
+),
+(
+    (SELECT user_id FROM reader_info WHERE username = 'grace_reads'),
+    (SELECT book_id FROM book_info WHERE book_isbn = 'COMIC-BATMAN-V2-01'),
+    'The introduction of the Court of Owls storyline!', 5, 'reading'
 );
-
 UPDATE book_info 
 SET publisher = 'Signet Classic', edition = 'Centennial Edition' 
 WHERE book_isbn = '9780451524935';
