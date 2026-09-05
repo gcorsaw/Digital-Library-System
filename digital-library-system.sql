@@ -19,7 +19,9 @@ CREATE TABLE book_info (
     book_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     book_isbn VARCHAR(20) UNIQUE,
     book_title VARCHAR(255) NOT NULL,
-    publish_date DATE
+    publish_date DATE,
+    publisher VARCHAR(255),
+    edition VARCHAR(50)
 );
 
 CREATE TABLE book_author (
@@ -92,10 +94,10 @@ CREATE INDEX index_book_genre_genre_id ON book_genre(genre_id);
 CREATE INDEX index_book_media_type_media_type_id ON book_media_type(media_type_id);
 CREATE INDEX index_book_tracking_book_id ON book_tracking(book_id);
 
-INSERT INTO book_info(book_isbn, book_title, publish_date) VALUES 
-('9780451524935', '1984', '1949-06-08'),
-('9780141439518', 'Pride and Prejudice', '1813-01-28'),
-('9780060853983', 'Good Omens', '1990-05-01');
+INSERT INTO book_info (book_isbn, book_title, publish_date, publisher, edition) VALUES 
+('9780451524935', '1984', '1949-06-08', 'Signet Classic', 'Centennial Edition'),
+('9780141439518', 'Pride and Prejudice', '1813-01-28', 'Penguin Classics', 'Deluxe Edition'),
+('9780060853983', 'Good Omens', '1990-05-01', 'William Morrow', 'International Edition');
 
 INSERT INTO author_info (first_name, last_name) VALUES 
 ('George', 'Orwell'),
@@ -146,6 +148,18 @@ INSERT INTO book_tracking(user_id, book_id, book_summary, book_ratings, read_sta
     (SELECT book_id FROM book_info WHERE book_isbn = '9780141439518'),
     'Wit, romance, and social commentary done right.', 5, 'finished'
 );
+
+UPDATE book_info 
+SET publisher = 'Signet Classic', edition = 'Centennial Edition' 
+WHERE book_isbn = '9780451524935';
+
+UPDATE book_info 
+SET publisher = 'Penguin Classics', edition = 'Deluxe Edition' 
+WHERE book_isbn = '9780141439518';
+
+UPDATE book_info 
+SET publisher = 'William Morrow', edition = 'International Edition' 
+WHERE book_isbn = '9780060853983';
 
 SELECT * FROM author_info;
 SELECT * FROM book_info;
