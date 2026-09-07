@@ -2,7 +2,7 @@ import os
 import psycopg2
 from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Query, status
 from pydantic import BaseModel
 from datetime import date
 from fastapi.encoders import jsonable_encoder
@@ -308,53 +308,6 @@ def search_title_by_word(title: str):
         if connection is not None:
             connection.close()
 
-"""The following function will get a single book from the database. What's unique
-about the paramter for this function is that the book_id is going to be recognized
-as an integer. This function will fetch a single book by ID, validate
-that a specific record with the ID exists. It will also support 
-updating and deleting a specific book. It'll also return a detailed record data."""
-@library_app.get("/books/{book_id}")           
-def get_single_book_endpoint(book_id: int):
-    connection = None
-    try:
-        connection = psycopg2.connect(
-            dbname=get_env("DB_NAME"),
-            user=get_env("DB_USER"),
-            password=get_env("DB_PASSWORD"),
-            host=get_env("DB_HOST"),
-            port=int(get_env("DB_PORT"))
-        )
-        cursor = connection.cursor(cursor_factory=RealDictCursor)
-
-        cursor.execute(
-            """
-            SELECT b.*, ba.author_id
-            FROM book_info AS b
-            LEFT JOIN LATERAL (
-                SELECT author_id
-                FROM book_author
-                WHERE book_id = b.book_id
-                ORDER BY author_id
-                LIMIT 1
-            ) AS ba ON TRUE
-            WHERE b.book_id = %s;
-            """,
-            (book_id,),
-        )
-        book = cursor.fetchone()
-        cursor.close()
-
-        if book is None:
-            raise HTTPException(status_code=404, detail="Book not found")
-        return book
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500,detail=str(e))
-    finally:
-        if connection is not None:
-            connection.close()
-
 @library_app.delete("/books/{book_id}")
 def delete_book_endpoint(book_id: int):
     connection = None
@@ -629,6 +582,136 @@ def get_comic_book_from_database(comic: str):
         if connection is not None:
             connection.close()
             print('Database connection closed.')
+
+"""What this function does is that it's going to search for the minimum and the
+max number of pages that the user is looking for. The Query parameter is used as a
+FastAPI helper that is going to define and validate the query-string parameter in the URL.
+The first if-statement in the function is going to check to see if the minimum
+pages are null and it will also check to see if the maximum number of pages 
+are also null. If that is the case, then it's going to raise an HTTPException
+and it the status code is going to be a 400 error code with the message indicating 
+to the user that they will have to provide a minimum or a maximum number of pages, or 
+both a min and a max number of pages. The second if statment is going to be using 
+similar checking process to that of the prior conditional statement, however, it's 
+going to be also checking to see if the minimum number of pages is greater than the 
+maximum number of pages. If that is the case, then it's going to raise an HTTPException
+error with the status code of 400 and the detail message behind the code indicating
+'min_pages cannot be greater than max_pages'. After the conditions were checked and satisfied,
+we are going to intialize our connection and attempt to make a connection to the 
+dataabase. Within our try block, after the connection was formed, the cursor
+is going to make a connnection using our connection. We're also going to be performing 
+a query where it's going to be selecting information from our book_info table where
+the page amount is not null and it's also going to be finding the page amount where
+the page amount is going to be null or greater than or less than the value. Then it's 
+going to be order the resutls by the page amount and book_title."""
+@library_app.get("/books/search/pages")
+def search_books_by_pages(
+    min_pages: int | None = Query(default=None, ge=0),
+    max_pages: int | None = Query(default=None, ge=0),
+):
+    if min_pages is None and max_pages is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide min_pages, max_pages, or both"
+        )
+
+    if min_pages is not None and max_pages is not None and min_pages > max_pages:
+        raise HTTPException(
+            status_code=400,
+            detail="min_pages cannot be greater than max_pages"
+        )
+
+    connection = None
+
+    try:
+        connection = psycopg2.connect(
+            dbname=get_env("DB_NAME"),
+            user=get_env("DB_USER"),
+            password=get_env("DB_PASSWORD"),
+            host=get_env("DB_HOST"),
+            port=int(get_env("DB_PORT"))
+        )
+
+        cursor = connection.cursor(cursor_factory=RealDictCursor)
+
+        query = """
+            SELECT *
+            FROM book_info
+            WHERE page_amount IS NOT NULL
+              AND (%s IS NULL OR page_amount >= %s)
+              AND (%s IS NULL OR page_amount <= %s)
+            ORDER BY page_amount, book_title;
+        """
+
+        cursor.execute(
+            query,
+            (min_pages, min_pages, max_pages, max_pages)
+        )
+
+        books = cursor.fetchall()
+        cursor.close()
+
+        return {
+            "query": {
+                "min_pages": min_pages,
+                "max_pages": max_pages
+            },
+            "books": books
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Search by page count failed: {str(e)}"
+        )
+    finally:
+        if connection is not None:
+            connection.close()
+
+"""The following function will get a single book from the database. What's unique
+about the parameter for this function is that the book_id is recognized as an integer.
+The function fetches a single book by ID and validates that the record exists."""
+@library_app.get("/books/{book_id}")
+def get_single_book_endpoint(book_id: int):
+    connection = None
+    try:
+        connection = psycopg2.connect(
+            dbname=get_env("DB_NAME"),
+            user=get_env("DB_USER"),
+            password=get_env("DB_PASSWORD"),
+            host=get_env("DB_HOST"),
+            port=int(get_env("DB_PORT"))
+        )
+        cursor = connection.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute(
+            """
+            SELECT b.*, ba.author_id
+            FROM book_info AS b
+            LEFT JOIN LATERAL (
+                SELECT author_id
+                FROM book_author
+                WHERE book_id = b.book_id
+                ORDER BY author_id
+                LIMIT 1
+            ) AS ba ON TRUE
+            WHERE b.book_id = %s;
+            """,
+            (book_id,),
+        )
+        book = cursor.fetchone()
+        cursor.close()
+
+        if book is None:
+            raise HTTPException(status_code=404, detail="Book not found")
+        return book
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if connection is not None:
+            connection.close()
 
 def main():
     print("Hello from digital-library-system!")

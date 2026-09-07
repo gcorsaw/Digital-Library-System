@@ -23,7 +23,8 @@ CREATE TABLE book_info (
     publisher VARCHAR(255),
     edition VARCHAR(50),
     issue_number VARCHAR(50) default null,
-    volume_number INT default null
+    volume_number INT default null,
+    page_amount INT default null
 );
 
 CREATE TABLE book_author (
@@ -98,12 +99,13 @@ CREATE INDEX index_book_genre_genre_id ON book_genre(genre_id);
 CREATE INDEX index_book_media_type_media_type_id ON book_media_type(media_type_id);
 CREATE INDEX index_book_tracking_book_id ON book_tracking(book_id);
 
-INSERT INTO book_info (book_isbn, book_title, publish_date, publisher, edition, issue_number, volume_number) VALUES 
-('9780451524935', '1984', '1949-06-08', 'Signet Classic', 'Centennial Edition', NULL, NULL),
-('9780141439518', 'Pride and Prejudice', '1813-01-28', 'Penguin Classics', 'Deluxe Edition', NULL, NULL),
-('9780060853983', 'Good Omens', '1990-05-01', 'William Morrow', 'International Edition', NULL, NULL),
-('COMIC-BATMAN-V2-01', 'Batman: The Court of Owls', '2011-09-21', 'DC Comics', 'First Printing', '1', 2),
-('COMIC-WATCHMEN-01', 'Watchmen', '1986-09-01', 'DC Comics', 'First Printing', '1', 1);
+INSERT INTO book_info (book_isbn, book_title, publish_date, publisher, edition, issue_number, volume_number, page_amount) VALUES 
+('9780451524935', '1984', '1949-06-08', 'Signet Classic', 'Centennial Edition', NULL, NULL, 328),
+('9780141439518', 'Pride and Prejudice', '1813-01-28', 'Penguin Classics', 'Deluxe Edition', NULL, NULL, 480),
+('9780060853983', 'Good Omens', '1990-05-01', 'William Morrow', 'International Edition', NULL, NULL, 412),
+('COMIC-BATMAN-V2-01', 'Batman: The Court of Owls', '2011-09-21', 'DC Comics', 'First Printing', '1', 2, 32),
+('9780000000099', 'Some Untitled Work', '2020-01-01', 'Unknown Press', NULL, NULL, NULL, NULL),
+('COMIC-WATCHMEN-01', 'Watchmen', '1986-09-01', 'DC Comics', 'First Printing', '1', 1, 32);
 
 INSERT INTO author_info (first_name, last_name) VALUES 
 ('George', 'Orwell'),

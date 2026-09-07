@@ -292,3 +292,48 @@ def test_comic_search_rejects_multiple_words():
     assert response.json()["detail"] == (
         "Please provide only one word to search by comic book title"
     )
+
+def test_search_books_by_pages():
+    client = TestClient(library_app)
+    response = client.get("/books/search/pages")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Provide min_pages, max_pages, or both"
+    )
+
+def test_search_books_by_pages_with_minimum():
+    client = TestClient(library_app)
+    response = client.get("/books/search/pages?min_pages=300")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["query"] == {"min_pages": 300, "max_pages": None}
+    assert isinstance(data["books"], list)
+
+def test_search_books_by_pages_with_maximum():
+    client = TestClient(library_app)
+    response = client.get("/books/search/pages?max_pages=100")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["query"] == {"min_pages": None, "max_pages": 100}
+    assert isinstance(data["books"], list)
+
+def test_search_books_by_pages_with_range():
+    client = TestClient(library_app)
+    response = client.get("/books/search/pages?min_pages=300&max_pages=500")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["query"] == {"min_pages": 300, "max_pages": 500}
+    assert isinstance(data["books"], list)
+
+def test_search_books_by_pages_rejects_invalid_range():
+    client = TestClient(library_app)
+    response = client.get("/books/search/pages?min_pages=500&max_pages=300")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "min_pages cannot be greater than max_pages"
+    )
