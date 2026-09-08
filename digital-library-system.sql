@@ -8,14 +8,14 @@ DROP TABLE IF EXISTS book_info CASCADE;
 DROP TABLE IF EXISTS reader_info CASCADE;
 DROP TABLE IF EXISTS author_info CASCADE;
 
-CREATE TABLE author_info (
+CREATE TABLE if not exists author_info (
     author_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     first_name VARCHAR(50),
     last_name VARCHAR(50),
     CONSTRAINT uq_author_name UNIQUE (first_name, last_name)
 );
 
-CREATE TABLE book_info (
+CREATE TABLE if not exists book_info (
     book_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     book_isbn VARCHAR(20) UNIQUE,
     book_title VARCHAR(255) NOT NULL,
@@ -27,14 +27,14 @@ CREATE TABLE book_info (
     page_amount INT default null
 );
 
-CREATE TABLE book_author (
+CREATE TABLE if not exists book_author (
     book_id INT REFERENCES book_info(book_id) ON DELETE CASCADE,
     author_id INT REFERENCES author_info(author_id) ON DELETE CASCADE,
     creator_role VARCHAR(50) not null check (creator_role in ('Writer', 'Penciler', 'Inker', 'Colorist', 'Letterer', 'Cover Artist', 'Author')),
     PRIMARY KEY (book_id, author_id, creator_role)  -- This is going to allow for multi-author configurations for books
 );
 
-CREATE TABLE reader_info (
+CREATE TABLE if not exists reader_info (
     user_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
@@ -61,7 +61,7 @@ the user with a history of their reading progress. The primary key for this tabl
 both a user_id and a book_id, this is to ensure that the user can only have one
 entry for each book in their list. 
 */
-CREATE TABLE book_tracking (
+CREATE TABLE if not exists book_tracking (
     user_id INT REFERENCES reader_info(user_id) ON DELETE CASCADE,
     book_id INT REFERENCES book_info(book_id) ON DELETE CASCADE,
     book_summary VARCHAR(300),
@@ -72,23 +72,23 @@ CREATE TABLE book_tracking (
     PRIMARY KEY (user_id, book_id)
 );
 
-CREATE TABLE genre (
+CREATE TABLE if not exists genre (
     genre_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     genre_name VARCHAR(50) UNIQUE NOT NULL
 );
 
-CREATE TABLE book_genre (
+CREATE TABLE if not exists book_genre (
     book_id INT REFERENCES book_info(book_id) ON DELETE CASCADE,
     genre_id INT REFERENCES genre(genre_id) ON DELETE CASCADE,
     PRIMARY KEY (book_id, genre_id)
 );
 
-CREATE TABLE media_type (
+CREATE TABLE if not exists media_type (
     media_type_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     media_type_name VARCHAR(50) UNIQUE NOT null
 );
 
-CREATE TABLE book_media_type (
+CREATE TABLE if not exists  book_media_type (
     book_id INT REFERENCES book_info(book_id) ON DELETE CASCADE,
     media_type_id INT REFERENCES media_type(media_type_id) ON DELETE CASCADE,
     PRIMARY KEY (book_id, media_type_id)
