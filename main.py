@@ -145,9 +145,15 @@ def get_db_cursor() -> Generator[RealDictCursor, None, None]:
         cursor.close()
         db_manager.release_conn(connection)
 
-
+"""
+The connect() function is going to create a connection to the database. The try block is going to create the connection to the database and the cursor is going to also make a connection.
+The try block is also going to print the PostgreSQL database version and cursor is going to execute a select version of the database as well. THe value is then going to be stored in the version
+varaible. It will then print the version. To end the try block, the cursor is going to close. In the except block, we're going to have 2 parameters and the first one is going to be an Exception and
+the second paramter is going to be a psycopg2.DatabaseError, both of these parameters are going to be known as an error, if an error were to occur, we're going to print the error and raise it as well.
+In the finally block, we're going to check to see if our connection is not null, if the condition is null, then we won't be entering the if block. However, if the conection is not null, then we're 
+going to close the connection and print out the statement of `Database connection closed.`.
+"""
 def connect():
-    """Connect to the PostgreSQL database server"""
     connection = None
     try:
         connection = psycopg2.connect(
@@ -167,16 +173,10 @@ def connect():
     except (Exception, psycopg2.DatabaseError) as error:
         print(error)
         raise(error)
-    # if the connection is not None, then close the connection to the database
     finally:
         if connection is not None:
             connection.close()
             print('Database connection closed.')
-
-
-# =====================================================================
-# VALIDATION SCHEMAS
-# =====================================================================
 
 class Book(BaseModel):
     book_isbn: str | None = None
@@ -207,11 +207,6 @@ class Book_Description(BaseModel):
 
 class Book_Description_Update(BaseModel):
     book_description: str
-
-
-# =====================================================================
-# FASTAPI APPLICATION PATH ROUTING
-# =====================================================================
 
 @library_app.get("/")
 def read_root():
@@ -247,7 +242,15 @@ def get_book_summaries_from_database(cursor: RealDictCursor = Depends(get_db_cur
     except Exception as e:
         raise HTTPException(status_code = 500, detail= "Could not find book details")
 
-
+"""
+This particular function (get_details_from_database) is defining a FastAPI dependency injection parameter. 
+It's typically used in a route function to automatically provide an active database cursor for executing SQL   
+queries. This is useful because it's going to allow us to search down the url with the cursor and have the dependecy
+parameter. The : RealDictCusor is used because it would have the cursor return the query results as dictionaries where the
+column names are keys instead of standard tuples and this is specific to psycopg2 (PostgreSQL). The = Depends(get_db_cursor) is
+the FastAPI dependency injection symbol (Depends). This tells FastAPI to execute the get_db_cursor helper function before
+running the route, and pass its return value into the cursor variable.
+"""
 @library_app.get("/books/info")
 def get_details_from_database(cursor: RealDictCursor = Depends(get_db_cursor)):
     try:

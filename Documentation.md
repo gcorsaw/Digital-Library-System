@@ -119,3 +119,5 @@
     * Another task that I plan on performing today is drafting a User Interface to ensure that I can still try and bring out ideas on what may be useful for the user for when they start to add or remove books from the database.
     * For another work block, I intend on doing some more documenetation on the rest of the functions that I have added or any modificiations that were made to the `main.py` file.
         * This is going to be an interesting process because it's going to be a good review of information and there are going to be new concepts that I have learned about yet that I may have to further research on. 
+        * I added more documentation to the functions that were newer additions to the code as I already had and I also added documentation for the functions.
+    * A task that I did was that I drafted a UI idea and it was interesting because it seem to change every time that a new idea becomes an image. Another part that was interesting how the ideas can change each time.
