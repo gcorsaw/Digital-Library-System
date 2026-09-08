@@ -27,7 +27,8 @@ def test_book_add_success():
         "book_isbn": "9780000000001",
         "book_title": "New Test Book",
         "author_id": 1,
-        "publish_date": "2026-01-01"
+        "creator_role_id": 7,
+        "publish_date": "2026-01-01",
     }
 
     response = client.post("/books", json=payload)
@@ -53,7 +54,8 @@ def test_book_remove_success():
         "book_isbn": "9780000000001",
         "book_title": "New Test Book",
         "author_id": 1,
-        "publish_date": "2026-01-01"
+        "creator_role_id": 7,
+        "publish_date": "2026-01-01",
     }
     create_response = client.post("/books", json=payload)
     assert create_response.status_code == 201
@@ -337,3 +339,45 @@ def test_search_books_by_pages_rejects_invalid_range():
     assert response.json()["detail"] == (
         "min_pages cannot be greater than max_pages"
     )
+
+def test_book_requires_isbn_or_internal_code():
+    client = TestClient(library_app)
+
+    response = client.post(
+        "/books",
+        json={"book_title": "Missing Identifier"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_book_requires_author_fields_together():
+    client = TestClient(library_app)
+
+    response = client.post(
+        "/books",
+        json={
+            "book_isbn": "9780000000002",
+            "book_title": "Incomplete Author Data",
+            "author_id": 1,
+        },
+    )
+
+    assert response.status_code == 422
+
+def test_book_can_use_internal_code():
+    client = TestClient(library_app)
+
+    response = client.post(
+        "/books",
+        json={
+            "internal_code": "TEST-CODE-001",
+            "book_title": "Internal Code Book",
+        },
+    )
+
+    assert response.status_code == 201
+    book_id = response.json()["book"]["book_id"]
+
+    delete_response = client.delete(f"/books/{book_id}")
+    assert delete_response.status_code == 200

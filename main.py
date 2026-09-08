@@ -3,10 +3,10 @@ import psycopg2
 from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from datetime import date
-from fastapi.encoders import jsonable_encoder
 import uvicorn
+
 
 # def config(filename='database.ini', section='postgresql'):
 #     parser = ConfigParser()
@@ -36,9 +36,10 @@ import uvicorn
 # 2. Set the value by getting the value from the shell environment values. This will
 # overwrite any value that you got from the .env file.
 
+load_dotenv()
 library_app = FastAPI()
 
-load_dotenv()
+
 """The get_env function is going to be used to get the environment variables
 that are needed to connect to the database. This function is also going to be used 
 to get the environemnet variables thta are needed to connnect to the database.
@@ -154,11 +155,26 @@ def get_details_from_database():
             connection.close()
 
 class Book(BaseModel):
-    book_isbn: str
+    book_isbn: str | None = None
+    internal_code: str | None = None
     book_title: str
     author_id: int | None = None
-    creator_role: str | None = "Author"
+    creator_role_id: int | None = None
     publish_date: date | None = None
+
+    @model_validator(mode="after")
+    def validate_book_data(self):
+        if not self.book_isbn and not self.internal_code:
+            raise ValueError(
+                "Either book_isbn or internal_code is required"
+            )
+
+        if (self.author_id is None) != (self.creator_role_id is None):
+            raise ValueError(
+                "author_id and creator_role_id must be provided together"
+            )
+
+        return self
 
 @library_app.post("/books", status_code=status.HTTP_201_CREATED)
 def user_add_book(book: Book):
@@ -180,22 +196,43 @@ def user_add_book(book: Book):
         )
         cursor = connection.cursor(cursor_factory=RealDictCursor)
         query = """
-        INSERT INTO book_info(book_isbn, book_title, publish_date)
-        VALUES (%s, %s, %s)
-        RETURNING *;
-        """
+    INSERT INTO book_info (
+        book_isbn,
+        internal_code,
+        book_title,
+        publish_date
+    )
+    VALUES (%s, %s, %s, %s)
+    RETURNING *;
+"""
+
         cursor.execute(
-            query, (book.book_isbn, book.book_title, book.publish_date)
+            query,
+            (
+                book.book_isbn,
+                book.internal_code,
+                book.book_title,
+                book.publish_date,
+            ),
         )
         new_book = cursor.fetchone()
 
-        if book.author_id is not None:
+        if book.author_id is not None and book.creator_role_id is not None:
             cursor.execute(
-                "INSERT INTO book_author(book_id, author_id, creator_role) VALUES (%s, %s, %s);",
-                (new_book["book_id"], book.author_id, book.creator_role),
+            """
+            INSERT INTO book_author (
+                book_id,
+                author_id,
+                creator_role_id
             )
-            new_book["author_id"] = book.author_id
-            new_book["creator_role"] = book.creator_role
+            VALUES (%s, %s, %s);
+            """,
+            (
+                new_book["book_id"],
+                book.author_id,
+                book.creator_role_id,
+            ),
+        )
         connection.commit()
 
         return {"message": "Book added successfully", "book": new_book}
@@ -712,6 +749,9 @@ def get_single_book_endpoint(book_id: int):
     finally:
         if connection is not None:
             connection.close()
+
+
+
 
 def main():
     print("Hello from digital-library-system!")

@@ -170,11 +170,16 @@ CREATE TABLE if not exists book_adaptation (
 );
 
 CREATE INDEX index_book_adaptation_book_id ON book_adaptation(book_id);
-
 CREATE INDEX IF NOT EXISTS index_book_author_author_id ON book_author(author_id);
-CREATE INDEX index_book_genre_genre_id ON book_genre(genre_id);
-CREATE INDEX index_book_media_type_media_type_id ON book_media_type(media_type_id);
-CREATE INDEX index_book_tracking_book_id ON book_tracking(book_id);
+
+CREATE INDEX IF NOT EXISTS index_book_genre_genre_id
+    ON book_genre(genre_id);
+
+CREATE INDEX IF NOT EXISTS index_book_media_type_media_type_id
+    ON book_media_type(media_type_id);
+
+CREATE INDEX IF NOT EXISTS index_book_tracking_book_id
+    ON book_tracking(book_id);
 
 INSERT INTO book_info (book_isbn, internal_code, book_title, publish_date, publisher, edition, issue_number, volume_number, page_amount, language) VALUES 
 ('9780451524935', NULL, '1984', '1949-06-08', 'Signet Classic', 'Centennial Edition', NULL, NULL, 328, 'en'),
