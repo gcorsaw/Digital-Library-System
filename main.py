@@ -685,6 +685,27 @@ def get_book_database():
     finally:
         db_manager.release_conn(connection)
 
+def add_multiple_authors():
+    connection = db_manager.get_conn()
+    cursor = connection.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute(
+            """
+            SELECT author_id, first_name, last_name
+            FROM author_info
+            ORDER BY last_name, first_name, author_id;
+            """
+        )
+        authors = cursor.fetchall()
+        for author in authors:
+            print(f"{author['first_name']} {author['last_name']}")
+        return authors
+    finally:
+        cursor.close()
+        db_manager.release_conn(connection)
+
+
+
 def main():
     print("Hello from digital-library-system!")
     try:

@@ -121,3 +121,10 @@
         * This is going to be an interesting process because it's going to be a good review of information and there are going to be new concepts that I have learned about yet that I may have to further research on. 
         * I added more documentation to the functions that were newer additions to the code as I already had and I also added documentation for the functions.
     * A task that I did was that I drafted a UI idea and it was interesting because it seem to change every time that a new idea becomes an image. Another part that was interesting how the ideas can change each time.
+
+    * __Wednesday (9/9/2026)__
+        * The first task that I did today was to refresh my memory about third normal form and after the research, it made more sense and I was able to determine that my database was alaready in third normal form. This was a task that my supervisor recommend that I attempt to do from our meeting last week. I also was able to find a way to allow users to have multiple books that are by the same author.
+            * It was interesting to relearn about the third normal form. This was because it didn't occur to me that the code that I already had was in that particular form rather than having it in first or second normal form. 
+        * Another task that I performed is that I created another function in my `main.py` file where it make a connection to the database and it's going to select the author id, first name, and last name from the author information and it's going to oder by the last name, first name, and author id.
+            * This was another interesting process because there was some similarities to the other functions in the code as well.
+        * I also drafter another UI idea where depending on certain types of input, the UI will respond by only allowing the user to input certain information given prior responses.
