@@ -522,7 +522,15 @@ def search_books_by_author(author: str = Query(...), cursor: RealDictCursor = De
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search by author failed: {str(e)}")
 
-
+"""
+This function is going to retrieve a commic book from the database. The
+parameter is going to declare a required string query paramter defined as 
+comic that the client must pass in the URL The ... (ellipsis) specifies that 
+the paramter is mandatory. The second cursor where cursor: RealDictCusor = Depends(get_db_cursor)
+is going to use the FastAPI's Depends to inject a database cursor. The RealDictCursor
+is going to ensure that the database rwos are returned as Python dictionaries where
+columns map to keys, rather than tuples.
+"""
 @library_app.get("/comics/search")
 def get_comic_book_from_database(comic: str = Query(...), cursor: RealDictCursor = Depends(get_db_cursor)):
     if not comic or not comic.strip():
@@ -684,10 +692,25 @@ def get_book_database():
         raise error
     finally:
         db_manager.release_conn(connection)
-
+"""
+This function is going to allow the users to add multiple authors to the database. The db_manager is going to get the 
+connection and it's going to be stored in the connnection variable. The the connection.cursor is going to then be 
+used to create a PostgreSQL cursor whose query is going to behave like a dictionary. The RealDictCursor comes from psycopg2.extras
+and it's useful for returning database rows through the FastAPI.
+"""
 def add_multiple_authors():
     connection = db_manager.get_conn()
     cursor = connection.cursor(cursor_factory=RealDictCursor)
+    """The try block is going to have the cursor execute the select command where
+    it's going to select the author_id, first_name and last_name from the author info
+    table in the database. It's also going to order the results of the database by the last
+    name, first name, and the authors id values. The cursor.fetchall() is going retrieve the remaining rows 
+    returned by the cursor.execute command, the information is then going to be stored into the authors 
+    variable. In the for-in block, we're going to be performing the command because we are wanting to
+    print out the dictionary 'author' values that are authors dictionary. Outside of the 
+    for-in loop, we're going to return the authors. In the finally block, we're going
+    close the cursor and we're going to also release the connection to the database
+    as well."""
     try:
         cursor.execute(
             """
@@ -705,7 +728,14 @@ def add_multiple_authors():
         db_manager.release_conn(connection)
 
 
-
+"""In the main() function, we're going to print out a test to ensure that the file
+is working as it should be, after the print statement, we're going to try 
+and get the book database. In the exception block, if we aren't able to get 
+our database, then the file is going to print out a message consisting of 
+'Main execution waning: local databaase check failed'. After the except block, 
+the database manager is going to be set up a database connection pool to manage
+multiple database connections efficiently. The uvicorn.run is going to be used 
+as a way to initialize the app with a host, port, and a reload be initialized."""
 def main():
     print("Hello from digital-library-system!")
     try:
