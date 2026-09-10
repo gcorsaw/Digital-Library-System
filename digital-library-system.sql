@@ -8,12 +8,8 @@ DROP TABLE IF EXISTS book_genre CASCADE;
 DROP TABLE IF EXISTS book_media_type CASCADE;
 DROP TABLE IF EXISTS book_author CASCADE;
 DROP TABLE IF EXISTS author_info CASCADE;
-DROP TABLE IF EXISTS creator_role_type CASCADE;
-DROP TABLE IF EXISTS genre CASCADE;
-DROP TABLE IF EXISTS media_type CASCADE;
-DROP TABLE IF EXISTS book_info CASCADE;
 
--- Added drops for board game domain tables
+-- Board game tables must be dropped before shared genre and user tables.
 DROP TABLE IF EXISTS game_tracking CASCADE;
 DROP TABLE IF EXISTS game_genre CASCADE;
 DROP TABLE IF EXISTS game_designer CASCADE;
@@ -21,13 +17,18 @@ DROP TABLE IF EXISTS designer_info CASCADE;
 DROP TABLE IF EXISTS game_info CASCADE;
 DROP TABLE IF EXISTS reader_info CASCADE;
 
+DROP TABLE IF EXISTS creator_role_type CASCADE;
+DROP TABLE IF EXISTS genre CASCADE;
+DROP TABLE IF EXISTS media_type CASCADE;
+DROP TABLE IF EXISTS book_info CASCADE;
+
 -- Automated timestamp tracking function
-CREATE OR REPLACE FUNCTION set_updated_at() RETURNS TRIGGER AS $$
+CREATE OR REPLACE FUNCTION set_updated_at() RETURNS TRIGGER AS $function$
 BEGIN
     NEW.updated_at = NOW();
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$function$ LANGUAGE plpgsql;
  
 -- 2. CORE BOOK SCHEMAS
 CREATE TABLE IF NOT EXISTS author_info (
@@ -217,31 +218,32 @@ CREATE INDEX IF NOT EXISTS index_book_tracking_book_id ON book_tracking(book_id)
  
 -- 6. STABILIZED JSON BULK INGESTION FUNCTION
 CREATE OR REPLACE FUNCTION bulk_insert_books(payload jsonb)
-RETURNS TABLE(book_id INT, book_title VARCHAR) AS $$
+RETURNS TABLE(book_id INT, book_title VARCHAR) AS $function$
 BEGIN
     -- Unnest the input array retaining ordinal indices
-    DROP TABLE IF EXISTS pg_temp._input_books;
-    DROP TABLE IF EXISTS pg_temp._new_books;
+    DROP TABLE IF EXISTS _input_books;
+    DROP TABLE IF EXISTS _new_books;
 
     CREATE TEMP TABLE _input_books ON COMMIT DROP AS
     SELECT
-        ord,
-        (elem->>'isbn')::VARCHAR AS book_isbn,
-        (elem->>'internal_code')::VARCHAR AS internal_code,
-        (elem->>'title')::VARCHAR AS book_title,
-        (elem->>'publish_date')::DATE AS publish_date,
-        (elem->>'publisher')::VARCHAR AS publisher,
-        (elem->>'language')::VARCHAR         AS language,
-        elem->'authors'                      AS authors,
-        elem->'genres'                       AS genres,
-        elem->'media_types' AS media_types FROM jsonb_array_elements(payload) WITH ORDINALITY AS t(elem, ord);
+        t.ord,
+        (t.elem->>'isbn')::VARCHAR AS book_isbn,
+        (t.elem->>'internal_code')::VARCHAR AS internal_code,
+        (t.elem->>'title')::VARCHAR AS book_title,
+        (t.elem->>'publish_date')::DATE AS publish_date,
+        (t.elem->>'publisher')::VARCHAR AS publisher,
+        (t.elem->>'language')::VARCHAR AS language,
+        t.elem->'authors' AS authors,
+        t.elem->'genres' AS genres,
+        t.elem->'media_types' AS media_types
+    FROM jsonb_array_elements(payload) WITH ORDINALITY AS t(elem, ord);
  
     -- Resolved cross-join identification defect by tracking matching input rows linearly
     CREATE TEMP TABLE _new_books ON COMMIT DROP AS
     WITH inserted AS (
         INSERT INTO book_info (book_isbn, internal_code, book_title, publish_date, publisher, language)
-        SELECT book_isbn, internal_code, book_title, publish_date, publisher, language
-        FROM _input_books
+        SELECT ib.book_isbn, ib.internal_code, ib.book_title, ib.publish_date, ib.publisher, ib.language
+        FROM _input_books AS ib
         ON CONFLICT DO NOTHING
         RETURNING book_info.book_id, book_info.book_title, book_info.book_isbn, book_info.internal_code
     )
@@ -302,7 +304,7 @@ BEGIN
  
     RETURN QUERY SELECT nb.book_id, nb.book_title FROM _new_books nb ORDER BY nb.ord;
 END;
-$$ LANGUAGE plpgsql;
+$function$ LANGUAGE plpgsql;
  
 -- 7. DATA SEEDING SETUP
 INSERT INTO book_info (book_isbn, internal_code, book_title, publish_date, publisher, edition, issue_number, volume_number, page_amount, language) VALUES 
