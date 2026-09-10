@@ -8,7 +8,7 @@ from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Depends, status
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 import uvicorn
 
 # Be sure to export environment variables before connecting
@@ -692,6 +692,7 @@ def get_book_database():
     finally:
         db_manager.release_conn(connection)
 
+
 """
 This function is going to allow the users to add multiple authors to the database. The db_manager is going to get the 
 connection and it's going to be stored in the connnection variable. The the connection.cursor is going to then be 
@@ -700,36 +701,123 @@ and it's useful for returning database rows through the FastAPI.
 """
 def add_multiple_authors():
     connection = db_manager.get_conn()
-    cursor = connection.cursor(cursor_factory=RealDictCursor)
-    """The try block is going to have the cursor execute the select command where
-    it's going to select the author_id, first_name and last_name from the author info
-    table in the database. It's also going to order the results of the database by the last
-    name, first name, and the authors id values. The cursor.fetchall() is going retrieve the remaining rows 
-    returned by the cursor.execute command, the information is then going to be stored into the authors 
-    variable. In the for-in block, we're going to be performing the command because we are wanting to
-    print out the dictionary 'author' values that are authors dictionary. Outside of the 
-    for-in loop, we're going to return the authors. In the finally block, we're going
-    close the cursor and we're going to also release the connection to the database
-    as well."""
+    try:
+        with connection.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                SELECT author_id, first_name, last_name
+                FROM author_info
+                ORDER BY last_name, first_name, author_id;
+                """
+            )
+            return cursor.fetchall()
+    finally:
+        db_manager.release_conn(connection)
+
+
+"""This particular function is going to allow the user to search for all of the books that they have added
+to the database. The connection variable is going to store the connection to the database.
+In the try block, the connection with the cursor is going to create a PostgreSQL cursor where
+the query is it's going to behave like a dictionary. This process is similar to that of
+the other functions that use a similar process. During the cursor.execute block,
+we're going to select every piece of information from the game_info table, 
+and we're going to order the table by the game title. After we're done with the with block,
+we're going to return the cursor.fetchall(). In the finally block, we're going to 
+release the connection to the database."""
+def search_all_games():
+    connection = db_manager.get_conn()
+    try:
+        with connection.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM game_info
+                ORDER BY game_title;
+                """
+            )
+            return cursor.fetchall()
+    finally:
+        db_manager.release_conn(connection)
+
+class Game(BaseModel):
+    game_title: str = Field(..., min_length=1, max_length=255)
+    publisher: str | None = Field(default=None, max_length=255)
+    release_date: date | None = None
+    min_players: int | None = Field(default=None, gt=0)
+    max_players: int | None = Field(default=None, gt=0)
+    play_time_minutes: int | None = Field(default=None, gt=0)
+    min_age: int | None = Field(default=None, ge=0)
+    game_description: str | None = None
+
+    @model_validator(mode="after")
+    def validate_player_range(self):
+        if (
+            self.min_players is not None
+            and self.max_players is not None
+            and self.max_players < self.min_players
+        ):
+            raise ValueError("max_players cannot be less than min_players")
+        return self
+"""This particular function is going to allow the users to add games to the database. In the try block,
+we're going to have the cursor execute the insert into the game info table the information that is going 
+to be associated with the variables. The variables are initially declared in the Game class prior to the 
+function declaration. The stripping with the variable name is going to be 
+used to remove any white space that is occuring and the game.variable_name to ensure that there 
+is no confusion in the code about which variables are going to be used."""
+@library_app.post("/games", status_code=status.HTTP_201_CREATED)
+def add_game(game: Game, cursor: RealDictCursor = Depends(get_db_cursor)):
     try:
         cursor.execute(
             """
-            SELECT author_id, first_name, last_name
-            FROM author_info
-            ORDER BY last_name, first_name, author_id;
-            """
+            INSERT INTO game_info(
+                game_title,
+                publisher,
+                release_date,
+                min_players,
+                max_players,
+                play_time_minutes,
+                min_age,
+                game_description
+            )
+            VALUES(%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING *;
+            """,
+            (
+                game.game_title.strip(),
+                game.publisher.strip() if game.publisher else None,
+                game.release_date,
+                game.min_players,
+                game.max_players,
+                game.play_time_minutes,
+                game.min_age,
+                game.game_description,
+            ),
         )
-        authors = cursor.fetchall()
-        for author in authors:
-            print(f"{author['first_name']} {author['last_name']}")
-        return authors
-    finally:
-        cursor.close()
-        db_manager.release_conn(connection)
+        new_game = cursor.fetchone()
+        return{
+            "message": "Game added successfully",
+            "game": new_game,
+        }
+    except psycopg2.errors.UniqueViolation:
+        raise HTTPException(
+            status_code = 409,
+            detail ="A game with this title already exists.",
+        )
+    except psycopg2.errors.CheckViolation:
+        raise HTTPException(
+            status_code=400,
+            detail="Game data violates a dtabase constraint.",
+        )
+    except psycopg2.Error:
+        logging.exception("Database error while adding games")
+        raise HTTPException(
+            status_code = 500,
+            detail= "A database error occurred while adding the game.",
+        )
 
-def search_all_games():
-    connection = db_manager.get_conn()
-    cursor = connection.cursor(cursor_factory=RealDictCursor)
+""""""
+@library_app.get("/games")
+def get_all_games(cursor: RealDictCursor = Depends(get_db_cursor)):
     try:
         cursor.execute(
             """
@@ -738,22 +826,14 @@ def search_all_games():
             ORDER BY game_title;
             """
         )
-        games = cursor.fetchall()
-        for game in games:
-            print(f"{game['game_title']}")
-        return games
-    finally:
-        cursor.close()
-        db_manager.release_conn(connection)
-
-
-@library_app.get("/games")
-def get_all_games():
-    try:
-        return {"games": search_all_games()}
-    except Exception as error:
+        return {"games": cursor.fetchall()}
+    except psycopg2.Error as error:
         logging.exception("Database error in get_all_games")
-        raise HTTPException(status_code=500, detail="Could not retrieve games") from error
+        raise HTTPException(
+            status_code=500,
+            detail="Could not retrieve games",
+        ) from error
+
         
 """In the main() function, we're going to print out a test to ensure that the file
 is working as it should be, after the print statement, we're going to try 
@@ -786,3 +866,4 @@ def setup_test_env():
     yield
     os.environ["TESTING"] = "False"
 """
+

@@ -1,4 +1,5 @@
 import os
+from uuid import uuid4
 
 import psycopg2
 import pytest
@@ -453,3 +454,41 @@ def test_get_games(client):
     
     assert "games" in data
     assert isinstance(data["games"], list)
+
+def test_add_game(client):
+    game_title = f"Test Game {uuid4()}"
+    payload = {
+        "game_title": game_title,
+        "publisher": "Test Publisher",
+        "release_date": "2026-01-01",
+        "min_players": 2,
+        "max_players": 4,
+        "play_time_minutes": 45,
+        "min_age": 8,
+        "game_description": "A test game.",
+    }
+
+    try:
+        response = client.post("/games", json=payload)
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["message"] == "Game added successfully"
+        assert data["game"]["game_title"] == game_title
+    finally:
+        connection = psycopg2.connect(
+            dbname=get_env("DB_NAME"),
+            user=get_env("DB_USER"),
+            password=get_env("DB_PASSWORD"),
+            host=get_env("DB_HOST"),
+            port=int(get_env("DB_PORT")),
+        )
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM game_info WHERE game_title = %s;",
+                    (game_title,),
+                )
+            connection.commit()
+        finally:
+            connection.close()
