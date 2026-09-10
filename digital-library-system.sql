@@ -168,7 +168,77 @@ CREATE TABLE if not exists book_adaptation (
     title VARCHAR(255) NOT NULL,
     release_date DATE
 );
- 
+
+CREATE TABLE IF NOT EXISTS game_info (
+    game_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    game_title VARCHAR(255) NOT NULL,
+    publisher VARCHAR(255),
+    release_date DATE,
+    min_players INT,
+    max_players INT,
+    play_time_minutes INT,
+    min_age INT,
+    game_description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_player_range CHECK (min_players IS NULL OR max_players IS NULL OR min_players <= max_players)
+);
+
+CREATE TRIGGER trigger_game_info_updated
+BEFORE UPDATE ON game_info
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Designers, reusing the same shape as author_info
+CREATE TABLE IF NOT EXISTS designer_info (
+    designer_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    first_name VARCHAR(50) NOT NULL,
+    last_name VARCHAR(50) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_designer_name UNIQUE (first_name, last_name)
+);
+
+CREATE TRIGGER trigger_designer_info_updated
+BEFORE UPDATE ON designer_info
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Links designers to games (a game can have multiple designers;
+-- a designer can have multiple games)
+CREATE TABLE IF NOT EXISTS game_designer (
+    game_id INT REFERENCES game_info(game_id) ON DELETE CASCADE,
+    designer_id INT REFERENCES designer_info(designer_id) ON DELETE CASCADE,
+    PRIMARY KEY (game_id, designer_id)
+);
+
+CREATE INDEX IF NOT EXISTS index_game_designer_designer_id ON game_designer(designer_id);
+
+-- Reuses your existing genre table (e.g. add 'Strategy', 'Party', 'Cooperative')
+CREATE TABLE IF NOT EXISTS game_genre (
+    game_id INT REFERENCES game_info(game_id) ON DELETE CASCADE,
+    genre_id INT REFERENCES genre(genre_id) ON DELETE CASCADE,
+    PRIMARY KEY (game_id, genre_id)
+);
+
+CREATE INDEX IF NOT EXISTS index_game_genre_genre_id ON game_genre(genre_id);
+
+-- Parallel to book_tracking — user's shelf status for a game
+CREATE TABLE IF NOT EXISTS game_tracking (
+    user_id INT REFERENCES reader_info(user_id) ON DELETE CASCADE,
+    game_id INT REFERENCES game_info(game_id) ON DELETE CASCADE,
+    game_notes VARCHAR(300),
+    game_ratings INT CHECK (game_ratings BETWEEN 1 AND 5),
+    play_status VARCHAR(10) NOT NULL DEFAULT 'want' CHECK (play_status IN ('want', 'owned', 'played')),
+    added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, game_id)
+);
+
+CREATE TRIGGER trigger_game_tracking_updated
+BEFORE UPDATE ON game_tracking
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE INDEX IF NOT EXISTS index_game_tracking_game_id ON game_tracking(game_id);
+
 CREATE INDEX index_book_adaptation_book_id ON book_adaptation(book_id);
 CREATE INDEX IF NOT EXISTS index_book_author_author_id ON book_author(author_id);
  

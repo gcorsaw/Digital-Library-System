@@ -666,7 +666,7 @@ This array is going to allow for the book data to be return safely. The try bloc
 in this file, but the difference is that after the declaration/initialization of the cursor, the cursor is going to execute the 
 SELECT * FROM book_info PostgreSQL command. This is going to retrieve all of the information that we currently of the books in our database"""
 def get_book_database():
-    """Fetch and print all the rows from the book infor as a record set (list 
+    """Fetch and print all the rows from the book information as a record set (list 
     of dictionaries)"""
     connection = db_manager.get_conn()
     book_records = [] #this will allow for the book data to be returned safely
