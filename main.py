@@ -633,7 +633,7 @@ def search_books_by_pages(
 about the parameter for this function is that the book_id is recognized as an integer.
 The function fetches a single book by ID and validates that the record exists."""
 @library_app.get("/books/{book_id}")
-def get_single_book_endpoint(book_id: int, cursor: RealDictCursor = Depends(get_db_cursor)):
+def get_book_details(book_id: int, cursor: RealDictCursor = Depends(get_db_cursor)):
     try:
         cursor.execute(
             """
@@ -659,7 +659,6 @@ def get_single_book_endpoint(book_id: int, cursor: RealDictCursor = Depends(get_
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 """This function (get_book_database) will make a connection to the database and have an array for the book records be initialized.
 This array is going to allow for the book data to be return safely. The try block is going to be similar to that of the other functions
@@ -692,6 +691,7 @@ def get_book_database():
         raise error
     finally:
         db_manager.release_conn(connection)
+
 """
 This function is going to allow the users to add multiple authors to the database. The db_manager is going to get the 
 connection and it's going to be stored in the connnection variable. The the connection.cursor is going to then be 
@@ -727,7 +727,34 @@ def add_multiple_authors():
         cursor.close()
         db_manager.release_conn(connection)
 
+def search_all_games():
+    connection = db_manager.get_conn()
+    cursor = connection.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute(
+            """
+            SELECT *
+            FROM game_info
+            ORDER BY game_title;
+            """
+        )
+        games = cursor.fetchall()
+        for game in games:
+            print(f"{game['game_title']}")
+        return games
+    finally:
+        cursor.close()
+        db_manager.release_conn(connection)
 
+
+@library_app.get("/games")
+def get_all_games():
+    try:
+        return {"games": search_all_games()}
+    except Exception as error:
+        logging.exception("Database error in get_all_games")
+        raise HTTPException(status_code=500, detail="Could not retrieve games") from error
+        
 """In the main() function, we're going to print out a test to ensure that the file
 is working as it should be, after the print statement, we're going to try 
 and get the book database. In the exception block, if we aren't able to get 

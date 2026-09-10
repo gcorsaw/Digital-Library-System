@@ -122,10 +122,15 @@
         * I added more documentation to the functions that were newer additions to the code as I already had and I also added documentation for the functions.
     * A task that I did was that I drafted a UI idea and it was interesting because it seem to change every time that a new idea becomes an image. Another part that was interesting how the ideas can change each time.
 
-    * __Wednesday (9/9/2026)__
-        * The first task that I did today was to refresh my memory about third normal form and after the research, it made more sense and I was able to determine that my database was alaready in third normal form. This was a task that my supervisor recommend that I attempt to do from our meeting last week. I also was able to find a way to allow users to have multiple books that are by the same author.
-            * It was interesting to relearn about the third normal form. This was because it didn't occur to me that the code that I already had was in that particular form rather than having it in first or second normal form. 
-        * Another task that I performed is that I created another function in my `main.py` file where it make a connection to the database and it's going to select the author id, first name, and last name from the author information and it's going to oder by the last name, first name, and author id.
-            * This was another interesting process because there was some similarities to the other functions in the code as well.
-        * I also drafted another UI idea where depending on certain types of input, the UI will respond by only allowing the user to input certain information given prior responses.
-        * The first task that I worked in my second work block is that I added more documentation to my main.py python file. I did this for the functions that didn't have any documentation yet or just functions that where I didn't have a complete understanding of. Another task that I did this work block is I did another draft of a User Interface to draw up more ideas for what I may want to use for the front end development process.
+* __Wednesday (9/9/2026)__
+     * The first task that I did today was to refresh my memory about third normal form and after the research, it made more sense and I was able to determine that my database was alaready in third normal form. This was a task that my supervisor recommend that I attempt to do from our meeting last week. I also was able to find a way to allow users to have multiple books that are by the same author.
+        * It was interesting to relearn about the third normal form. This was because it didn't occur to me that the code that I already had was in that particular form rather than having it in first or second normal form. 
+    * Another task that I performed is that I created another function in my `main.py` file where it make a connection to the database and it's going to select the author id, first name, and last name from the author information and it's going to oder by the last name, first name, and author id.
+        * This was another interesting process because there was some similarities to the other functions in the code as well.
+    * I also drafted another UI idea where depending on certain types of input, the UI will respond by only allowing the user to input certain information given prior responses.
+    * The first task that I worked in my second work block is that I added more documentation to my main.py python file. I did this for the functions that didn't have any documentation yet or just functions that where I didn't have a complete understanding of. Another task that I did this work block is I did another draft of a User Interface to draw up more ideas for what I may want to use for the front end development process.
+
+* __Thursday (9/10/2026)__
+    * A task that I completed was to find some coding tasks that I haven't completed yet. The first of which was to add a table(s) to the database for games. I also still had some tasks where I could add some more FastAPI functions where the functions are going to allow the useres to search all of the games that they have added to the database. 
+    * A task that I'll complete in another work block, I'll add a function where the user will be able to add a game to the database. I'll continue to add more documentation to the functions that I have added in the first work block, as well as I'll continue to draft more User Interfaces in the second work block as well. 
+    

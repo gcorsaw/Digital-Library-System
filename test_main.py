@@ -11,6 +11,7 @@ from main import (
     get_book_database,
     get_env,
     library_app,
+    search_all_games,
 )
 
 
@@ -433,3 +434,22 @@ def test_add_multiple_authors_returns_expected_fields():
         assert "author_id" in author
         assert "first_name" in author
         assert "last_name" in author
+
+def test_search_all_games():
+    games = search_all_games()
+    assert isinstance(games, list)
+    assert games
+
+    for game in games:
+        assert "game_title" in game
+        assert "min_players" in game
+        assert "max_players" in game
+
+def test_get_games(client):
+    response = client.get("/games")
+
+    assert response.status_code == 200
+    data = response.json()
+    
+    assert "games" in data
+    assert isinstance(data["games"], list)
