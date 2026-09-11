@@ -9,7 +9,6 @@ DROP TABLE IF EXISTS book_media_type CASCADE;
 DROP TABLE IF EXISTS book_author CASCADE;
 DROP TABLE IF EXISTS author_info CASCADE;
 
--- Board game tables must be dropped before shared genre and user tables.
 DROP TABLE IF EXISTS game_tracking CASCADE;
 DROP TABLE IF EXISTS game_genre CASCADE;
 DROP TABLE IF EXISTS game_designer CASCADE;
@@ -22,10 +21,19 @@ DROP TABLE IF EXISTS genre CASCADE;
 DROP TABLE IF EXISTS media_type CASCADE;
 DROP TABLE IF EXISTS book_info CASCADE;
 
+/*
+ This is going to create or replace a function that's named set_updated_at() to return
+ as a trigger as $function$. It will then begin with a New.updated_at now to create a new
+ variable that is going to have the assignment where it's now going to now store the NOW()
+ function. As we may see in other table creations, the NOW() is going to be used to 
+ create a timestamp with the current date and time. TIMESTAMPZ is also used for getting
+ the timestamp with the time zone. Normally, timestamp would be equivalent to timestamp without
+ time zone.
+*/
 -- Automated timestamp tracking function
 CREATE OR REPLACE FUNCTION set_updated_at() RETURNS TRIGGER AS $function$
 BEGIN
-    NEW.updated_at = NOW();
+    NEW.updated_at := NOW();
     RETURN NEW;
 END;
 $function$ LANGUAGE plpgsql;
@@ -59,6 +67,16 @@ CREATE TABLE IF NOT EXISTS book_info (
     language VARCHAR(10),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    /*
+     The search_vector is going to use tsvector value and the tsvector is a sorted list of
+     lexemes, these are words that have been normalized to merge different variants of the same word. 
+     In addition to having it always using the generate always as command, the to_tsvector is the function
+     that is going to be used for converting a document to a tsvector datatype. It's going to 
+     convert the document to english, coalesce the book title, and the associated descripition. It's then
+     going to be stored. It's also going to have a constraint with a chk_has_identifier, it's
+     going to use the chk_has_identifier and check to ensure that the book_isbn or the internal code is not
+     null as both the isbn and the internal code are unique.
+    */
     search_vector tsvector GENERATED ALWAYS AS (
         to_tsvector('english', COALESCE(book_title, '') || ' ' || COALESCE(book_description, ''))
     ) STORED,
@@ -113,7 +131,6 @@ CREATE TABLE IF NOT EXISTS book_adaptation (
     release_date DATE
 );
 
--- 3. CORE BOARD GAME SCHEMAS
 CREATE TABLE IF NOT EXISTS game_info (
     game_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     game_title VARCHAR(255) UNIQUE NOT NULL,
@@ -157,7 +174,6 @@ CREATE TABLE IF NOT EXISTS game_genre (
     PRIMARY KEY (game_id, genre_id)
 );
  
--- 4. SHARED USER ACCOUNT AND TRACKING SCHEMAS
 CREATE TABLE IF NOT EXISTS reader_info (
     user_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     username CITEXT UNIQUE NOT NULL,
@@ -207,8 +223,7 @@ CREATE TABLE IF NOT EXISTS game_tracking (
 CREATE TRIGGER trigger_game_tracking_updated
 BEFORE UPDATE ON game_tracking
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
- 
--- 5. PERFORMANCE INDEXES
+
 CREATE INDEX IF NOT EXISTS index_reading_progress_user_book ON reading_progress(user_id, book_id);
 CREATE INDEX IF NOT EXISTS index_book_adaptation_book_id ON book_adaptation(book_id);
 CREATE INDEX IF NOT EXISTS index_book_author_author_id ON book_author(author_id);
