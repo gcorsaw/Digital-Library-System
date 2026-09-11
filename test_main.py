@@ -288,6 +288,20 @@ def test_description_change_retuns_404_for_missing_books(client):
     assert response.status_code == 404
     assert response.json()["detail"] == "Book not found"
 
+def test_remove_book_description(client):
+    books = get_book_database()
+    if not books:
+        pytest.skip("Test database contains zero populated rows.")
+
+    target_id = books[0]["book_id"]
+
+    response = client.delete(f"/books/{target_id}/description")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["book_id"] == target_id
+    assert data["book_description"] is None
+
 def test_title_search(client):    
     # Find a valid name phrase from the test pool to guarantee search matches
     books = get_book_database()

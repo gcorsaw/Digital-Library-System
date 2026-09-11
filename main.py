@@ -356,6 +356,31 @@ def search_title_by_word(title: str = Query(...), cursor: RealDictCursor = Depen
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
+@library_app.delete("/books/{book_id}/description", response_model=Book_Description)
+def description_removal(book_id: int, cursor: RealDictCursor = Depends(get_db_cursor)):
+    try:
+        cursor.execute(
+            """
+            UPDATE book_info
+            SET book_description = NULL
+            WHERE book_id = %s
+            RETURNING book_id, book_title, book_description;
+            """,
+            (book_id,),
+        )
+        removed_description = cursor.fetchone()
+
+        if removed_description is None:
+            raise HTTPException(status_code=404, detail="Book not found")
+
+        return Book_Description(**removed_description)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not remove description: {str(e)}")
+
+
 @library_app.delete("/books/{book_id}")
 def delete_book_endpoint(book_id: int, cursor: RealDictCursor = Depends(get_db_cursor)):
     try:
@@ -391,7 +416,6 @@ def description_change(book_id: int, summary: Book_Description_Update, cursor: R
         raise
     except Exception as e:
         raise HTTPException (status_code=500, detail=f"Could not update description: {str(e)}")
-
 
 """
 The seach_book_media_type function is going to be used to search for the books by their media type. 
