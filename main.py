@@ -188,6 +188,13 @@ class Book(BaseModel):
 
     @model_validator(mode="after")
     def validate_book_data(self):
+        self.book_title = self.book_title.strip()
+        self.book_isbn = self.book_isbn.strip() if self.book_isbn else None
+        self.internal_code = self.internal_code.strip() if self.internal_code else None
+
+        if not self.book_title:
+            raise ValueError("book_title cannot be empty")
+
         if not self.book_isbn and not self.internal_code:
             raise ValueError(
                 "Either book_isbn or internal_code is required"
@@ -774,7 +781,16 @@ class Game(BaseModel):
     game_description: str | None = None
 
     @model_validator(mode="after")
-    def validate_player_range(self):
+    def validate_game_data(self):
+        self.game_title = self.game_title.strip()
+        self.publisher = self.publisher.strip() if self.publisher else None
+        self.game_description = (
+            self.game_description.strip() if self.game_description else None
+        )
+
+        if not self.game_title:
+            raise ValueError("game_title cannot be empty")
+
         if (
             self.min_players is not None
             and self.max_players is not None
@@ -858,7 +874,6 @@ def get_all_games(cursor: RealDictCursor = Depends(get_db_cursor)):
             detail="Could not retrieve games",
         ) from error
 
-        
 """In the main() function, we're going to print out a test to ensure that the file
 is working as it should be, after the print statement, we're going to try 
 and get the book database. In the exception block, if we aren't able to get 

@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 os.environ["TESTING"] = "True"
 
 from main import (
+    Book,
+    Game,
     add_multiple_authors,
     get_book_database,
     get_env,
@@ -506,3 +508,33 @@ def test_add_game(client):
             connection.commit()
         finally:
             connection.close()
+
+def test_book_data_verification():
+    book = Book(book_isbn=" ISBN-TEST ", book_title="  Test Book  ")
+
+    assert book.book_isbn == "ISBN-TEST"
+    assert book.book_title == "Test Book"
+
+
+def test_book_requires_isbn_or_internal_code():
+    with pytest.raises(ValueError, match="Either book_isbn or internal_code is required"):
+        Book(book_title="Test Book")
+
+
+def test_game_data_verification():
+    game = Game(
+        game_title="  Test Game  ",
+        publisher="  Test Publisher  ",
+        game_description="  A test game.  ",
+        min_players=2,
+        max_players=4,
+    )
+
+    assert game.game_title == "Test Game"
+    assert game.publisher == "Test Publisher"
+    assert game.game_description == "A test game."
+
+
+def test_game_rejects_invalid_player_range():
+    with pytest.raises(ValueError, match="max_players cannot be less than min_players"):
+        Game(game_title="Test Game", min_players=5, max_players=2)
