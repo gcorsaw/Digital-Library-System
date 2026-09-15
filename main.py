@@ -121,6 +121,7 @@ async def lifespan(app: FastAPI):
 # Define the app instance with the proper context lifespan attached
 library_app = FastAPI(lifespan=lifespan)
 
+
 """
 This function is giong to get the database cursor and it's paramters contain a yielded value (RealDictCurosr), a
 value sent into the generator and a return value (both the return and the value sent into the generator are null).

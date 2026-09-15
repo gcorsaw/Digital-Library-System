@@ -1,1 +1,21 @@
-<h1>{{title}}</h1>
+<main class="app-shell">
+  <h1>{{ title }}</h1>
+
+  <p *ngIf="loading">Loading books...</p>
+  <p *ngIf="error" class="error">{{ error }}</p>
+
+  <section *ngIf="!loading && !error">
+    <h2>Available Books</h2>
+    <ul *ngIf="books.length; else emptyState">
+      <li *ngFor="let book of books">
+        {{ book['book_title'] ?? book['title'] ?? 'Untitled book' }}
+      </li>
+    </ul>
+
+    <ng-template #emptyState>
+      <p>No books were returned by the API.</p>
+    </ng-template>
+  </section>
+</main>
+
+<router-outlet></router-outlet>
