@@ -12,7 +12,7 @@ export interface BookResponse {
 })
 export class ApiserviceService {
   private readonly apiUrl = 'http://localhost:8000';
-
+// Replace whatever address is currently there with your actual host mapping:
   constructor(private http: HttpClient) {}
 
   getBooks(): Observable<BookResponse> {

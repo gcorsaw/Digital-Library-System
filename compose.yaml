@@ -1,0 +1,49 @@
+services:
+  # Angular dev server (hot-reload, for local development)
+  server:
+    build:
+      context: ./angular-library-user-interface
+      dockerfile: Dockerfile.dev
+    ports:
+      - "4200:4200"
+
+  # Angular production build, served via Nginx
+  web:
+    build:
+      context: ./angular-library-user-interface
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+
+  # FastAPI backend
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8000:8000"
+    environment:
+      DB_HOST: db          # service name on the Docker network, not localhost
+      DB_PORT: "5432"      # Postgres' real internal port, not the 5440 host mapping
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+    depends_on:
+      - db
+
+  # PostgreSQL database
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5440:5432"   # host:container — lets you connect from your machine on 5440
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Auto-runs once, only when the volume is first created (empty data dir)
+      - ./digital-library-system.sql:/docker-entrypoint-initdb.d/01-schema.sql
+
+volumes:
+  pgdata:

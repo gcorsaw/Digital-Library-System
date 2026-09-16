@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Depends, status
 from pydantic import BaseModel, Field, model_validator
 import uvicorn
+from fastapi.middleware.cors import CORSMiddleware
 
 # Be sure to export environment variables before connecting
 # export DB_NAME=mydatabase
@@ -120,8 +121,18 @@ async def lifespan(app: FastAPI):
 
 # Define the app instance with the proper context lifespan attached
 library_app = FastAPI(lifespan=lifespan)
+origins = [
+    "http://localhost:4200",
+    "http://localhost:8080",
+]
 
-
+library_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 """
 This function is giong to get the database cursor and it's paramters contain a yielded value (RealDictCurosr), a
 value sent into the generator and a return value (both the return and the value sent into the generator are null).

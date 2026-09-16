@@ -1,0 +1,17 @@
+FROM python:3.12-slim
+
+# Install uv (fast Python package manager, matches your uv.lock)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+
+WORKDIR /app
+
+# Copy dependency files first to leverage caching
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+
+# Copy the rest of the application
+COPY . .
+
+EXPOSE 8000
+
+CMD ["uv", "run", "python", "main.py"]
