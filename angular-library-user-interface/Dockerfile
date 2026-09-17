@@ -2,7 +2,16 @@
 # Stage 1: Build the Angular Application
 # =========================================
 
-# Use a lightweight DHI Node.js image for building
+# =========================================
+# Use a lightweight DHI Node.js image for building (from the guide)
+# This is also the base image for the Dockerfile (reviewing from the guide)
+# The Docker Hardened Image (DHI) is going to provide minimal, secured, 
+# and production-ready container images, so in this particular case,
+# The node:24-alpine3.22-dev is going to be image and it's
+# the AS of the command is going to give the build stage
+# the name of builder. Later on, the --from=builder refers
+# to the stage.
+# =========================================
 FROM dhi.io/node:24-alpine3.22-dev AS builder
 
 # Set the working directory inside the container
@@ -24,6 +33,10 @@ RUN npm run build
 # Stage 2: Prepare Nginx to Serve Static Files
 # =========================================
 
+# This particular FROM is going to have another base image that is going to
+# use the same DHI as before, however the nginx:1.28.0-alpine3.21-dev is going
+# to be the image that we're going to be building. It's going then the AS is going to have
+# the the build the the image under the name of `runner`. 
 FROM dhi.io/nginx:1.28.0-alpine3.21-dev AS runner
 
 # Copy custom Nginx config
