@@ -5,7 +5,7 @@
 # Define the Node.js version to use (Alpine for a small footprint)
 ARG NODE_VERSION=24.12.0-alpine
 
-# Set the base image for development
+# Set the base image for development with node as the image with the version of 24.12.0 Alpine Angular
 FROM node:${NODE_VERSION} AS dev
 
 # Set environment variable to indicate development mode

@@ -122,10 +122,15 @@ async def lifespan(app: FastAPI):
 # Define the app instance with the proper context lifespan attached
 library_app = FastAPI(lifespan=lifespan)
 origins = [
-    "http://localhost:4200",
-    "http://localhost:8080",
+    "http://localhost:4200", #Angular development server
+    "http://localhost:8080", #Angular served by Nginx
 ]
 
+"""
+The library_app.add_middlware() function is going to enable CORS, which is going to lalow the Angular frontend to call the python API (which is where library_app comes into play because library_app is the variable name
+for our FastAPI). The addresses in the origins as mention in the single line comments, are going to be used for the for the development of Angular, the Angular development is going to be started with the localhost:4200. We can then use 
+the localhost:8000 to have our Angular to make the API requests to the FastAPI (Python).
+"""
 library_app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
