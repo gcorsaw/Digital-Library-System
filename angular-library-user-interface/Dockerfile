@@ -36,7 +36,8 @@ RUN npm run build
 # This particular FROM is going to have another base image that is going to
 # use the same DHI as before, however the nginx:1.28.0-alpine3.21-dev is going
 # to be the image that we're going to be building. It's going then the AS is going to have
-# the the build the the image under the name of `runner`. 
+# the the build the the image under the name of `runner`.
+
 FROM dhi.io/nginx:1.28.0-alpine3.21-dev AS runner
 
 # Copy custom Nginx config

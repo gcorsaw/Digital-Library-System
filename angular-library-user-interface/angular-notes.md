@@ -23,3 +23,4 @@
         * javascript and html are the pyc
 * daemon off; --> turns on interactive mode and turns off daemon on.
 * daemon on; --> turns of interactive mode and turns on the daemon.
+* The reason why we would have 2 separate images (such as nginx as runner and node as the builder) would be for smaller image sizes, caching efficiency, cleaner maintenance, and better security. The smaller image size and the better security is going to allow for a smaller attack surface, which is going to beneficial since there is no 'direct' path to the other image. The attacker would have to know how to get to the other image in order to attack both images. The cleaner maintence is going to be usefule because there is going to be less code to use for either image and there's going to be more cache space as the layers are going to be reused. The caching efficiency can also be tied into this as well because there can be more  
