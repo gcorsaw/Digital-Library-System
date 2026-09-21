@@ -1,14 +1,18 @@
 import os
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from typing import Generator
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, Depends, status
+from fastapi import FastAPI, HTTPException, Query, Depends, Form, status
+from typing import Annotated
+from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, Field, model_validator
+from jose import JWTError, jwt
+from pwdlib import PasswordHash
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -57,11 +61,12 @@ the same concept as the other functions. In the exception block, it's going to h
 this is then going to print the error and raise the error. The get_conn function is going to retrieve an available connection
 from the pool. If there is no pool, then it's going to perform the initialize_pool funtion. If there is a connection, then it
 will return the connection. As an additional note, the self._pool is going to be used as an internal use. The self means current
-DatabaseManager instance and the _pool is going to be the attribute
-that is holding the pool. The None in the first __init__ function is indicating 
-that there is no pool that has been created yet. The release_conn is going to 
-return the connection to the pool for reuse. The close_pool() function
-
+DatabaseManager instance and the _pool is going to be the attribute that is holding the pool. 
+The None in the first __init__ function is indicating that there is no pool that 
+has been created yet. The release_conn is going to return the connection to the pool for reuse. 
+The close_pool() function is going to close the pool that's managed by the DatabaseManager. 
+This fucntion isn't going to shut down PostgreSQL itself, it's only going to close the applications
+connection to the database and it's going to automatically run through the lifespan() function.
 """
 class DatabaseManager:
     def __init__(self):
@@ -138,6 +143,82 @@ library_app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
+password_hash = PasswordHash.recommended()
+
+
+def get_auth_setting(name: str) -> str:
+    value = os.getenv(name)
+    if not value or not value.strip():
+        raise RuntimeError(f"Missing required authentication setting: {name}")
+    return value.strip()
+
+
+def create_access_token(username: str, role: str) -> str:
+    now = datetime.now(timezone.utc)
+    claims = {
+        "sub": username,
+        "role": role,
+        "iss": get_auth_setting("JWT_ISSUER"),
+        "aud": get_auth_setting("JWT_AUDIENCE"),
+        "iat": now,
+        "exp": now + timedelta(minutes=30),
+    }
+    return jwt.encode(claims, get_auth_setting("JWT_SECRET_KEY"), algorithm="HS256")
+
+
+def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> dict:
+    credentials_error = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(
+            token,
+            get_auth_setting("JWT_SECRET_KEY"),
+            algorithms=["HS256"],
+            issuer=get_auth_setting("JWT_ISSUER"),
+            audience=get_auth_setting("JWT_AUDIENCE"),
+        )
+    except (JWTError, RuntimeError):
+        raise credentials_error
+
+    username = payload.get("sub")
+    role = payload.get("role")
+    if not isinstance(username, str) or not isinstance(role, str):
+        raise credentials_error
+    return {"username": username, "role": role}
+
+
+def require_role(*allowed_roles: str):
+    def role_dependency(user: Annotated[dict, Depends(get_current_user)]) -> dict:
+        if user["role"] not in allowed_roles:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        return user
+
+    return role_dependency
+
+
+@library_app.post("/auth/token")
+def login(username: Annotated[str, Form()], password: Annotated[str, Form()]):
+    try:
+        configured_username = get_auth_setting("AUTH_USERNAME")
+        configured_password_hash = get_auth_setting("AUTH_PASSWORD_HASH")
+        configured_role = os.getenv("AUTH_ROLE", "librarian").strip()
+        valid_password = password_hash.verify(password, configured_password_hash)
+    except (RuntimeError, ValueError):
+        raise HTTPException(status_code=500, detail="Authentication is not configured")
+
+    if username != configured_username or not valid_password:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return {"access_token": create_access_token(username, configured_role), "token_type": "bearer"}
 """
 This function is giong to get the database cursor and it's paramters contain a yielded value (RealDictCurosr), a
 value sent into the generator and a return value (both the return and the value sent into the generator are null).
@@ -286,7 +367,11 @@ def get_details_from_database(cursor: RealDictCursor = Depends(get_db_cursor)):
 
 
 @library_app.post("/books", status_code=status.HTTP_201_CREATED)
-def user_add_book(book: Book, cursor: RealDictCursor = Depends(get_db_cursor)):
+def user_add_book(
+    book: Book,
+    _user: dict = Depends(require_role("librarian", "admin")),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
     """The first except block is going to be used to catch the psycopg2.errors.UniqueViolation error.
     This error is going to be raised if the user tries to add a book with an ISBN that already exists in the database. 
     The second except block is going to be used to catch the psy. The third 
@@ -381,7 +466,11 @@ def search_title_by_word(title: str = Query(...), cursor: RealDictCursor = Depen
 
 
 @library_app.delete("/books/{book_id}/description", response_model=Book_Description)
-def description_removal(book_id: int, cursor: RealDictCursor = Depends(get_db_cursor)):
+def description_removal(
+    book_id: int,
+    _user: dict = Depends(require_role("librarian", "admin")),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
     try:
         cursor.execute(
             """
@@ -406,7 +495,11 @@ def description_removal(book_id: int, cursor: RealDictCursor = Depends(get_db_cu
 
 
 @library_app.delete("/books/{book_id}")
-def delete_book_endpoint(book_id: int, cursor: RealDictCursor = Depends(get_db_cursor)):
+def delete_book_endpoint(
+    book_id: int,
+    _user: dict = Depends(require_role("admin")),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
     try:
         cursor.execute(
             "DELETE FROM book_info WHERE book_id = %s RETURNING *;",
@@ -426,7 +519,12 @@ def delete_book_endpoint(book_id: int, cursor: RealDictCursor = Depends(get_db_c
 
 
 @library_app.put("/books/{book_id}/description", response_model=Book_Description)
-def description_change(book_id: int, summary: Book_Description_Update, cursor: RealDictCursor = Depends(get_db_cursor)):
+def description_change(
+    book_id: int,
+    summary: Book_Description_Update,
+    _user: dict = Depends(require_role("librarian", "admin")),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
     try:
         cursor.execute(
             "UPDATE book_info SET book_description = %s WHERE book_id = %s RETURNING book_id, book_title, book_description;",
@@ -822,7 +920,11 @@ function declaration. The stripping with the variable name is going to be
 used to remove any white space that is occuring and the game.variable_name to ensure that there 
 is no confusion in the code about which variables are going to be used."""
 @library_app.post("/games", status_code=status.HTTP_201_CREATED)
-def add_game(game: Game, cursor: RealDictCursor = Depends(get_db_cursor)):
+def add_game(
+    game: Game,
+    _user: dict = Depends(require_role("librarian", "admin")),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
     try:
         cursor.execute(
             """

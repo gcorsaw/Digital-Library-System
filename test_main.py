@@ -4,8 +4,15 @@ from uuid import uuid4
 import psycopg2
 import pytest
 from fastapi.testclient import TestClient
+from pwdlib import PasswordHash
 
 os.environ["TESTING"] = "True"
+os.environ.setdefault("AUTH_USERNAME", "test-admin")
+os.environ.setdefault("AUTH_PASSWORD_HASH", PasswordHash.recommended().hash("test-password"))
+os.environ.setdefault("AUTH_ROLE", "admin")
+os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-key-change-me")
+os.environ.setdefault("JWT_ISSUER", "digital-library-test")
+os.environ.setdefault("JWT_AUDIENCE", "digital-library-test-client")
 
 from main import (
     Book,
@@ -21,6 +28,14 @@ from main import (
 @pytest.fixture
 def client():
     with TestClient(library_app) as test_client:
+        token_response = test_client.post(
+            "/auth/token",
+            data={"username": "test-admin", "password": "test-password"},
+        )
+        assert token_response.status_code == 200
+        test_client.headers["Authorization"] = (
+            f"Bearer {token_response.json()['access_token']}"
+        )
         yield test_client
 
 
