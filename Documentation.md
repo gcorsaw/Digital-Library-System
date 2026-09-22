@@ -194,3 +194,4 @@
     * The second task that I completed in the second work block was to conduct more research on why we would want more than one image in a DockerFile. I also conducted some more reaseach in another Dockerfile that uses a `variable` to perform a similar task that will require less code to write.
 
 * __Tuesday(9/22/2026)__
+    * The first task that I did was that I added Cognito to my python code for security and I also checked for Swagger. This was interesting because I never fully used either of these to concepts before. However, the frustrating part about this first work block is that it took me longer to fully test and correct the code for all of the tests to pass. The next work block I intend to do more research on what Angular build is occurring and the terms of `Treesharing`, `minifying`, and more about the security and swagger.
