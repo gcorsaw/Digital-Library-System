@@ -1,11 +1,11 @@
 import os
 from uuid import uuid4
-
 import psycopg2
 import pytest
 from fastapi.testclient import TestClient
 from pwdlib import PasswordHash
 
+# Initialize system execution contexts immediately
 os.environ["TESTING"] = "True"
 os.environ.setdefault("AUTH_USERNAME", "test-admin")
 os.environ.setdefault("AUTH_PASSWORD_HASH", PasswordHash.recommended().hash("test-password"))
@@ -22,22 +22,31 @@ from main import (
     get_env,
     library_app,
     search_all_games,
+    db_manager,
+    get_current_user,
 )
 
+@pytest.fixture(scope="session", autouse=True)
+def manage_test_db_pool():
+    # Automatically triggers connection pool initialization during setup phases
+    db_manager.initialize_pool()
+    yield
+    db_manager.close_pool()
 
 @pytest.fixture
 def client():
+    # Bypasses missing token endpoints via dynamic FastAPI dependency injection
+    def mock_current_user() -> dict:
+        return {
+            "username": "test-admin",
+            "cognito_id": "mock-uuid-1234-5678",
+            "role": "admin"
+        }
+    
+    library_app.dependency_overrides[get_current_user] = mock_current_user
     with TestClient(library_app) as test_client:
-        token_response = test_client.post(
-            "/auth/token",
-            data={"username": "test-admin", "password": "test-password"},
-        )
-        assert token_response.status_code == 200
-        test_client.headers["Authorization"] = (
-            f"Bearer {token_response.json()['access_token']}"
-        )
         yield test_client
-
+    library_app.dependency_overrides.clear()
 
 @pytest.fixture
 def orwell_with_multiple_books():
@@ -94,13 +103,15 @@ def orwell_with_multiple_books():
             RETURNING book_id;
             """
         )
-        book_id = cursor.fetchone()[0]
+        res = cursor.fetchone()
+        book_id = res if isinstance(res, (tuple, list)) else res["book_id"]
+        
         cursor.execute(
             f"""
             INSERT INTO book_author (book_id, author_id, {role_column})
             VALUES (%s, %s, %s);
             """,
-            (book_id, author_row[0], role_row[0]),
+            (book_id, author_row if isinstance(author_row, (tuple, list)) else author_row["author_id"], role_row if isinstance(role_row, (tuple, list)) else role_row["creator_role_id"]),
         )
         connection.commit()
         yield
@@ -116,12 +127,10 @@ def test_read_root(client):
     assert response.status_code == 200
     assert response.json() == {"message": "Hello World"}
 
-# Tests to see if the root is found, if not then it'll return a 404 error.
 def test_not_found(client):
     response = client.get("/not-found")
     assert response.status_code == 404
 
-#Tests get the books from the database 
 def test_get_books(client):
     response = client.get("/books")
     assert response.status_code == 200
@@ -129,9 +138,7 @@ def test_get_books(client):
     assert "books" in data
     assert isinstance(data["books"], list)
 
-#Tests to see if adding a book to the database is successful
 def test_book_add_success(client):    
-    # Pre-seed background relational tables to prevent foreign key errors
     connection = psycopg2.connect(
         dbname=get_env("DB_NAME"), user=get_env("DB_USER"),
         password=get_env("DB_PASSWORD"), host=get_env("DB_HOST"),
@@ -139,7 +146,7 @@ def test_book_add_success(client):
     )
     cursor = connection.cursor()
     cursor.execute("SELECT author_id FROM author_info WHERE first_name = 'Test' AND last_name = 'Author' LIMIT 1;")
-    author_row = cursor.fetchone()
+    author_row = cursor.fetchone()[0]
     added_id = None
     if author_row is None:
         cursor.execute(
@@ -153,41 +160,33 @@ def test_book_add_success(client):
     legacy_role_schema = cursor.fetchone() is not None
     role_column = "creator_role" if legacy_role_schema else "creator_role_id"
     cursor.execute(f"SELECT {role_column} FROM book_author LIMIT 1;")
-    role_row = cursor.fetchone()
+    role_row = cursor.fetchone()[0]
     assert role_row is not None, "Test database needs an existing book_author role"
     connection.commit()
 
     payload = {
         "book_isbn": "9780000000001",
         "book_title": "New Test Book",
-        "author_id": author_row[0],
-        "creator_role_id": role_row[0],
+        "author_id": author_row,
+        "creator_role_id": role_row,
         "publish_date": "2026-01-01",
     }
 
     try:
         response = client.post("/books", json=payload)
-
         assert response.status_code == 201
         add_info = response.json()
         assert add_info["message"] == "Book added successfully"
         assert add_info["book"]["book_title"] == "New Test Book"
-
         added_id = add_info["book"]["book_id"]
     finally:
         if added_id is not None:
-            cursor.execute(
-                "DELETE FROM book_info WHERE book_id = %s;",
-                (added_id,),
-            )
+            cursor.execute("DELETE FROM book_info WHERE book_id = %s;", (added_id,))
             connection.commit()
-
         cursor.close()
         connection.close()
 
-#Tests to see if removing a book from the database is successful
 def test_book_remove_success(client):   
-    # Pre-seed background tables for this removal scenario as well
     connection = psycopg2.connect(
         dbname=get_env("DB_NAME"), user=get_env("DB_USER"),
         password=get_env("DB_PASSWORD"), host=get_env("DB_HOST"),
@@ -195,7 +194,7 @@ def test_book_remove_success(client):
     )
     cursor = connection.cursor()
     cursor.execute("SELECT author_id FROM author_info WHERE first_name = 'Test' AND last_name = 'Author' LIMIT 1;")
-    author_row = cursor.fetchone()
+    author_row = cursor.fetchone()[0]
     if author_row is None:
         cursor.execute(
             "INSERT INTO author_info (first_name, last_name) VALUES ('Test', 'Author') RETURNING author_id;"
@@ -208,7 +207,7 @@ def test_book_remove_success(client):
     legacy_role_schema = cursor.fetchone() is not None
     role_column = "creator_role" if legacy_role_schema else "creator_role_id"
     cursor.execute(f"SELECT {role_column} FROM book_author LIMIT 1;")
-    role_row = cursor.fetchone()
+    role_row = cursor.fetchone()[0]
     assert role_row is not None, "Test database needs an existing book_author role"
     connection.commit()
     cursor.close()
@@ -217,8 +216,8 @@ def test_book_remove_success(client):
     payload = {
         "book_isbn": "9780000000002",
         "book_title": "New Test Book",
-        "author_id": author_row[0],
-        "creator_role_id": role_row[0],
+        "author_id": author_row,
+        "creator_role_id": role_row,
         "publish_date": "2026-01-01",
     }
     create_response = client.post("/books", json=payload)
@@ -228,40 +227,32 @@ def test_book_remove_success(client):
 
     response = client.delete(f"/books/{book_id}")
     assert response.status_code == 200
-
     delete_info = response.json()
     assert delete_info["message"] == "Book deleted successfully"
     assert delete_info["book"]["book_id"] == book_id
     assert delete_info["book"]["book_title"] == "New Test Book"
 
 def test_book_details_success(client):    
-    # Query database records dynamically instead of guessing index /1
     books = get_book_database()
     if not books:
         pytest.skip("Test database contains zero populated rows.")
-        
-    target_id = books[0]["book_id"] if isinstance(books, list) else books["book_id"]
+    target_id = books[0]["book_id"] if len(books) > 0 else books["book_id"]
     response = client.get(f"/books/{target_id}")
     assert response.status_code == 200
-
     data = response.json()
     assert "book_title" in data
     assert data["book_id"] == target_id
 
-def test_book_details_retuns_expected_fields(client):    
-    # Fetch a true, live primary key directly from database pool results
+def test_book_details_returns_expected_fields(client):    
     books = get_book_database()
     if not books:
         pytest.skip("Test database contains zero populated rows.")
-        
-    target_id = books[0]["book_id"] if isinstance(books, list) else books["book_id"]
+    target_id = books[0]["book_id"] if len(books) > 0 else books["book_id"]
     response = client.get(f"/books/{target_id}")
     assert response.status_code == 200
-
     book_data = response.json()
     assert "book_title" in book_data
     assert book_data["book_id"] == target_id
-
 
 def test_search_details_invalid_id_type(client):
     response = client.get("/books/abc")
@@ -276,12 +267,10 @@ def test_search_info_success(client):
     assert isinstance(search_info["books"], list)
 
 def test_description_change_updates_book(client):  
-    # Ensure a target row exists to safely test updating values
     books = get_book_database()
     if not books:
         pytest.skip("Test database contains zero populated rows.")
-        
-    first_book = books[0] if isinstance(books, list) else books
+    first_book = books[0] if len(books) > 0 else books
     target_id = first_book["book_id"]
     target_title = first_book["book_title"]
     
@@ -289,7 +278,6 @@ def test_description_change_updates_book(client):
         f"/books/{target_id}/description",
         json={"book_description": "Updated test narrative description structure."},
     )
-
     assert response.status_code == 200
     data = response.json()
     assert data["book_id"] == target_id
@@ -301,7 +289,6 @@ def test_description_change_retuns_404_for_missing_books(client):
         "/books/999999/description",
         json={"book_description": "Nope"},
     )
-
     assert response.status_code == 404
     assert response.json()["detail"] == "Book not found"
 
@@ -309,29 +296,23 @@ def test_remove_book_description(client):
     books = get_book_database()
     if not books:
         pytest.skip("Test database contains zero populated rows.")
-
     target_id = books[0]["book_id"]
-
     response = client.delete(f"/books/{target_id}/description")
-
     assert response.status_code == 200
     data = response.json()
     assert data["book_id"] == target_id
     assert data["book_description"] is None
 
 def test_title_search(client):    
-    # Find a valid name phrase from the test pool to guarantee search matches
     books = get_book_database()
     if not books:
         pytest.skip("Test database contains zero populated rows.")
-        
-    first_book = books[0] if isinstance(books, list) else books
+    first_book = books[0] if len(books) > 0 else books
     search_term = first_book["book_title"].split()[0]
     
-    response = client.get(f"/books/search?title={search_term}")
+    response = client.get(f"/books/search?title={search_term}")    
     assert response.status_code == 200
     data = response.json()
-
     assert "query" in data
     assert "books" in data
     assert isinstance(data["books"], list)
@@ -341,21 +322,17 @@ def test_title_search_no_results(client):
     response = client.get("/books/search?title=zzzznotrealword")
     assert response.status_code == 200
     data = response.json()
-
     assert data["query"] == "zzzznotrealword"
     assert data["books"] == []
 
 def test_title_search_missing_query(client):
     response = client.get("/books/search")
-
-    #This assert will retun a 422 error if the title is missing as the query parameters require title
     assert response.status_code == 422
 
 def test_media_type_search(client):
     response = client.get("/books/search/media_type?media_type=ebook")
     assert response.status_code == 200
     data = response.json()
-
     assert "query" in data
     assert "books" in data
     assert isinstance(data["books"], list)
@@ -365,7 +342,6 @@ def test_media_type_search_no_results(client):
     response = client.get("/books/search/media_type?media_type=notarealmediatype")
     assert response.status_code == 200
     data = response.json()
-
     assert "query" in data
     assert "books" in data
     assert isinstance(data["books"], list)
@@ -375,7 +351,6 @@ def test_book_genre_search(client):
     response = client.get("/books/search/book_genre?genre=fiction")
     assert response.status_code == 200
     data = response.json()
-
     assert "query" in data
     assert "books" in data
     assert isinstance(data["books"], list)
@@ -385,7 +360,6 @@ def test_book_genre_search_no_results(client):
     response = client.get("/books/search/book_genre?genre=notarealgenre")
     assert response.status_code == 200
     data = response.json()
-
     assert "query" in data
     assert "books" in data
     assert isinstance(data["books"], list)
@@ -403,7 +377,6 @@ def test_author_search_no_results(client):
     response = client.get("/books/search/author?author=notarealauthor")
     assert response.status_code == 200
     data = response.json()
-
     assert "query" in data
     assert "books" in data
     assert isinstance(data["books"], list)
@@ -415,9 +388,9 @@ def test_get_book_summaries(client):
     data = response.json()
     assert "books" in data
     assert isinstance(data["books"], list)
+    if data["books"] and len(data["books"]) > 0:
+        assert "book_id" in data["books"][0]
 
-    if data["books"]:
-        assert isinstance(data["books"][0], dict)
 
 def test_get_authors(client, orwell_with_multiple_books):
     response = client.get("/books/search/author?author=orwell")
@@ -435,7 +408,6 @@ def test_author_can_have_multiple_books(orwell_with_multiple_books):
         host=get_env("DB_HOST"),
         port=int(get_env("DB_PORT")),
     )
-
     try:
         with connection.cursor() as cursor:
             cursor.execute("""
@@ -446,9 +418,7 @@ def test_author_can_have_multiple_books(orwell_with_multiple_books):
                   AND a.last_name = 'Orwell'
                 GROUP BY a.author_id;
             """)
-
             result = cursor.fetchone()
-
         assert result is not None
         author_id, book_count = result
         assert author_id is not None
@@ -458,10 +428,8 @@ def test_author_can_have_multiple_books(orwell_with_multiple_books):
 
 def test_add_multiple_authors_returns_expected_fields():
     authors = add_multiple_authors()
-
     assert isinstance(authors, list)
     assert authors
-
     for author in authors:
         assert "author_id" in author
         assert "first_name" in author
@@ -471,7 +439,6 @@ def test_search_all_games():
     games = search_all_games()
     assert isinstance(games, list)
     assert games
-
     for game in games:
         assert "game_title" in game
         assert "min_players" in game
@@ -479,10 +446,8 @@ def test_search_all_games():
 
 def test_get_games(client):
     response = client.get("/games")
-
     assert response.status_code == 200
     data = response.json()
-    
     assert "games" in data
     assert isinstance(data["games"], list)
 
@@ -498,10 +463,8 @@ def test_add_game(client):
         "min_age": 8,
         "game_description": "A test game.",
     }
-
     try:
         response = client.post("/games", json=payload)
-
         assert response.status_code == 201
         data = response.json()
         assert data["message"] == "Game added successfully"
@@ -526,15 +489,12 @@ def test_add_game(client):
 
 def test_book_data_verification():
     book = Book(book_isbn=" ISBN-TEST ", book_title="  Test Book  ")
-
     assert book.book_isbn == "ISBN-TEST"
     assert book.book_title == "Test Book"
-
 
 def test_book_requires_isbn_or_internal_code():
     with pytest.raises(ValueError, match="Either book_isbn or internal_code is required"):
         Book(book_title="Test Book")
-
 
 def test_game_data_verification():
     game = Game(
@@ -544,11 +504,9 @@ def test_game_data_verification():
         min_players=2,
         max_players=4,
     )
-
     assert game.game_title == "Test Game"
     assert game.publisher == "Test Publisher"
     assert game.game_description == "A test game."
-
 
 def test_game_rejects_invalid_player_range():
     with pytest.raises(ValueError, match="max_players cannot be less than min_players"):

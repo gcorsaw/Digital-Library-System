@@ -192,3 +192,5 @@
     * The tasks that I'll be working on later in my second work block is going to be to continue to research some more information about the Angular project that I did last week. This is just to ensure that I fully understand what is occuring in the code.
     * Another task that I was aslo thinking of completting was to try and get a start on creating the User Interface to ensure that the project is going to be completed on time and to ensure that there is enough time for a buffer to ensure that if there were errors or bugs to occur before the final deadline that the project can be fixed before then.
     * The second task that I completed in the second work block was to conduct more research on why we would want more than one image in a DockerFile. I also conducted some more reaseach in another Dockerfile that uses a `variable` to perform a similar task that will require less code to write.
+
+* __Tuesday(9/22/2026)__

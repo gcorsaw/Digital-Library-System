@@ -1,25 +1,23 @@
 import os
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
 from contextlib import asynccontextmanager
 from typing import Generator
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, Depends, Form, status
+from fastapi import FastAPI, HTTPException, Query, Depends, status
 from typing import Annotated
-from fastapi.security import OAuth2PasswordBearer
-from pydantic import BaseModel, Field, model_validator
-from jose import JWTError, jwt
-from pwdlib import PasswordHash
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi_cognito import CognitoAuth, CognitoSettings, CognitoToken
 
 # Be sure to export environment variables before connecting
-# export DB_NAME=mydatabase
-# export DB_USER=gcorsaw
-# export DB_PASSWORD=DadR0cks
+# export DB_NAME=your-database-name
+# export DB_USER=your-database-user
+# export DB_PASSWORD=your-database-password
 # export DB_HOST=localhost
 # export DB_PORT=5440
 #
@@ -124,8 +122,16 @@ async def lifespan(app: FastAPI):
     db_manager.close_pool()
 
 
-# Define the app instance with the proper context lifespan attached
-library_app = FastAPI(lifespan=lifespan)
+# Define the app instance with built-in Swagger UI and ReDoc documentation.
+library_app = FastAPI(
+    title="Digital Library API",
+    description="API for managing books, games, authors, and library metadata.",
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+)
 origins = [
     "http://localhost:4200", #Angular development server
     "http://localhost:8080", #Angular served by Nginx
@@ -144,52 +150,57 @@ library_app.add_middleware(
     allow_headers=["*"],
 )
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
-password_hash = PasswordHash.recommended()
-
-
 def get_auth_setting(name: str) -> str:
     value = os.getenv(name)
     if not value or not value.strip():
+        # PATCH ADDED HERE: Permits a dummy fallback string strictly during pytest runs
+        # so that Cognito doesn't throw a fatal RuntimeError before tests can start.
+        if os.getenv("TESTING") == "True":
+            return "mock-setting-value"
         raise RuntimeError(f"Missing required authentication setting: {name}")
     return value.strip()
 
 
-def create_access_token(username: str, role: str) -> str:
-    now = datetime.now(timezone.utc)
-    claims = {
-        "sub": username,
-        "role": role,
-        "iss": get_auth_setting("JWT_ISSUER"),
-        "aud": get_auth_setting("JWT_AUDIENCE"),
-        "iat": now,
-        "exp": now + timedelta(minutes=30),
-    }
-    return jwt.encode(claims, get_auth_setting("JWT_SECRET_KEY"), algorithm="HS256")
 
-
-def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> dict:
-    credentials_error = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
+class LibraryCognitoToken(CognitoToken):
+    groups: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("cognito:groups", "groups"),
     )
-    try:
-        payload = jwt.decode(
-            token,
-            get_auth_setting("JWT_SECRET_KEY"),
-            algorithms=["HS256"],
-            issuer=get_auth_setting("JWT_ISSUER"),
-            audience=get_auth_setting("JWT_AUDIENCE"),
-        )
-    except (JWTError, RuntimeError):
-        raise credentials_error
 
-    username = payload.get("sub")
-    role = payload.get("role")
-    if not isinstance(username, str) or not isinstance(role, str):
-        raise credentials_error
-    return {"username": username, "role": role}
+
+cognito_settings = CognitoSettings(
+    check_expiration=True,
+    jwt_header_name="Authorization",
+    jwt_header_prefix="Bearer",
+    userpools={
+        "library": {
+            "region": get_auth_setting("COGNITO_REGION"),
+            "userpool_id": get_auth_setting("COGNITO_USER_POOL_ID"),
+            "app_client_id": get_auth_setting("COGNITO_APP_CLIENT_ID"),
+        }
+    },
+)
+cognito = CognitoAuth(
+    cognito_settings,
+    userpool_name="library",
+    custom_model=LibraryCognitoToken,
+)
+
+
+def get_current_user(
+    token: Annotated[LibraryCognitoToken, Depends(cognito.auth_required)],
+) -> dict:
+    groups = {group.lower() for group in token.groups}
+    role = next(
+        (candidate for candidate in ("admin", "librarian") if candidate in groups),
+        "member",
+    )
+    return {
+        "username": token.username,
+        "cognito_id": token.cognito_id,
+        "role": role,
+    }
 
 
 def require_role(*allowed_roles: str):
@@ -201,24 +212,6 @@ def require_role(*allowed_roles: str):
     return role_dependency
 
 
-@library_app.post("/auth/token")
-def login(username: Annotated[str, Form()], password: Annotated[str, Form()]):
-    try:
-        configured_username = get_auth_setting("AUTH_USERNAME")
-        configured_password_hash = get_auth_setting("AUTH_PASSWORD_HASH")
-        configured_role = os.getenv("AUTH_ROLE", "librarian").strip()
-        valid_password = password_hash.verify(password, configured_password_hash)
-    except (RuntimeError, ValueError):
-        raise HTTPException(status_code=500, detail="Authentication is not configured")
-
-    if username != configured_username or not valid_password:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    return {"access_token": create_access_token(username, configured_role), "token_type": "bearer"}
 """
 This function is giong to get the database cursor and it's paramters contain a yielded value (RealDictCurosr), a
 value sent into the generator and a return value (both the return and the value sent into the generator are null).
@@ -249,7 +242,7 @@ The try block is also going to print the PostgreSQL database version and cursor 
 varaible. It will then print the version. To end the try block, the cursor is going to close. In the except block, we're going to have 2 parameters and the first one is going to be an Exception and
 the second paramter is going to be a psycopg2.DatabaseError, both of these parameters are going to be known as an error, if an error were to occur, we're going to print the error and raise it as well.
 In the finally block, we're going to check to see if our connection is not null, if the condition is null, then we won't be entering the if block. However, if the conection is not null, then we're 
-going to close the connection and print out the statement of `Database connection closed.`.
+going to close the connection and print out the statement of Database connection closed..
 """
 def connect():
     connection = None
@@ -266,7 +259,6 @@ def connect():
         cursor.execute("SELECT version();")
         version = cursor.fetchone()
         print(version)
-
         cursor.close()
     except (Exception, psycopg2.DatabaseError) as error:
         print(error)
@@ -843,8 +835,7 @@ def get_book_database():
 This function is going to allow the users to add multiple authors to the database. The db_manager is going to get the 
 connection and it's going to be stored in the connnection variable. The the connection.cursor is going to then be 
 used to create a PostgreSQL cursor whose query is going to behave like a dictionary. The RealDictCursor comes from psycopg2.extras
-and it's useful for returning database rows through the FastAPI.
-"""
+and it's useful for returning database rows through the FastAPI."""
 def add_multiple_authors():
     connection = db_manager.get_conn()
     try:
@@ -1012,16 +1003,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-"""
-@pytest.fixture(autouse=True)
-def setup_test_env():
-    #This will tell the app to use the test paramters rather than production paramters
-    os.environ["TESTING"] = "True"
-    os.environ.setdefault("DB_USER", "postgres")
-    os.environ.setdefault("DB_PASSWORD", "password")
-    os.environ.setdefault("DB_HOST", "localhost")
-    yield
-    os.environ["TESTING"] = "False"
-"""
-
