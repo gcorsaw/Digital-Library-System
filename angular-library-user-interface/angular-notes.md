@@ -83,3 +83,87 @@
     * What makes Incremental DOM allow the use of Tree Shaking?
         * By introducing instructions, during compilation, we can track if there is a reference from our component to a particular instruction. If there is not reference, we are able to perform Tree Shaking. In comparison, Virtual DOM relies on the interpreter, which is not able to check whether a given piece of code will be used in the application or not. 
         * In Angular, the **DOM (Document Object Model)** is the browser-based tree structure of HTML elements, and Angular's core philosophy is to let the framework manage it automatically through **data binding** rather than directly manipulating it.
+    * Team Google decided to introduce Incremental DOM to acheive two goals:
+        * Smaller bundle size
+        * Reduce the RAM requirements of the rendering engine
+    * Incremental DOM involves recompiling each component into a set of instructions. THe instructions allow us to create a DOM tree and then update the parts with muted data. This approach allows us to get rid of the Angular interpreter from the final bundle. Additionally, the way the instructions are used to upate the DOM requires less memory compared to the Virtual DOM used among others, by React, which generates full new versions of DOM trees.
+* __What makes Incremental DOM allow the use of Tree Shaking?__ [DOM and Tree Shaking](https://angular.love/angular-tree-shaking-2)
+    * By introducing instructions, during compilation, we can check if there is a reference from our component to a particular instruction. IF there is no reference, we are able to perform Tree Shaking. In comparison, Virtual DOM relies on the interpreter, which is not able to chekc whehter a given piece of code will be used in the application or not.
+    * Example:
+        * Angular application with a single component that uses interpolation and date pipe:
+            import { Component } from '@angular/core';
+
+            @Component({
+            selector: 'app-root',
+            template: `
+                <h1>Title: {{ title }}</h1>
+                <h2>{{ date | date }}</h2>
+            `,
+            })
+            export class AppComponent {
+            title = 'Tree shaking with Angular Ivy';
+            date = new Date();
+            }
+        * The usage of Angular Compiler CLI to generate the Js files which will contain our component in the form of instructions. After executing the `ngc -p tsconfig.json` command, the component now looks like this:
+            import { Component } from "@angular/core";
+            import * as i0 from "@angular/core";
+            import * as i1 from "@angular/common";
+            export class AppComponent {
+                constructor() {
+                    this.title = "Tree shaking with Angular Ivy";
+                    this.date = new Date();
+                }
+                }
+            AppComponent.ɵfac = function AppComponent_Factory(t) {
+                return new (t || AppComponent)();
+            };
+            AppComponent.ɵcmp = i0.ɵɵdefineComponent({
+                type: AppComponent,
+                selectors: [["app-root"]],
+                decls: 5,
+                vars: 4,
+                template: function AppComponent_Template(rf, ctx) {
+                    if (rf & 1) {
+                    i0.ɵɵelementStart(0, "h1");
+                    i0.ɵɵtext(1);
+                    i0.ɵɵelementEnd();
+                    i0.ɵɵelementStart(2, "h2");
+                    i0.ɵɵtext(3);
+                    i0.ɵɵpipe(4, "date");
+                    i0.ɵɵelementEnd();
+                    }
+                    if (rf & 2) {
+                    i0.ɵɵadvance(1);
+                    i0.ɵɵtextInterpolate1("Title: ", ctx.title, "");
+                    i0.ɵɵadvance(2);
+                    i0.ɵɵtextInterpolate(i0.ɵɵpipeBind1(4, 2, ctx.date));
+                    }
+                },
+                pipes: [i1.DatePipe],
+                encapsulation: 2,
+                });
+                /*@__PURE__*/ (function () {
+                i0.ɵsetClassMetadata(
+                    AppComponent,
+                    [
+                    {
+                        type: Component,
+                        args: [
+                        {
+                            selector: "app-root",
+                            template: `
+                    <h1>Title: {{ title }}</h1>
+                    <h2>{{ date | date }}</h2>
+                `,
+                        },
+                        ],
+                    },
+                    ],
+                    null,
+                    null
+                );
+            })();
+    * The first argument of the rf function stands for renderFlags, we can distinguish two modes 1 for RenderFlags.Create and 2 for RenderFlags.Update. When creating a component, we go from line 18 to line 24 (according to the article), adding our elements to an array called Logical View (LView), which holds the DOM elements, bound values, and directive instances.
+        * This array is created per componenet and then used for Change Detection. When we enter the update mode, the advance instructions allow us to find the postion of the updated element in the LView array. The values are stored in the cache, and the change detection process compares the new value with the current value. [How Angular Works](https://www.youtube.com/watch?v=S0o-4yc2n-8)
+* __Virtual Dom vs Incremental Dom in Angular__ [Virtual Dom vs Incremental Dom in Angular](https://www.angularminds.com/blog/virtual-dom-vs-incremental-dom-in-angular)
+    * 
