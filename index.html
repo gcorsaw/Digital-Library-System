@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Digital Library — Home</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+ 
+  <div class="app-frame">
+ 
+    <!-- ===== Top navigation ===== -->
+    <header class="topbar">
+      <button type="button" id="loginBtn" class="login-btn" aria-pressed="false">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="8" r="3.4"></circle>
+          <path d="M5 20c0-3.6 3.1-6.2 7-6.2s7 2.6 7 6.2"></path>
+        </svg>
+        <span id="loginLabel">Log in</span>
+      </button>
+ 
+      <nav class="icon-nav" aria-label="Primary">
+        <button type="button" id="homeBtn" class="icon-btn" aria-label="Home" aria-current="page">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 11.5 12 5l8 6.5"></path>
+            <path d="M6 10v9h12v-9"></path>
+            <path d="M10 19v-5h4v5"></path>
+          </svg>
+        </button>
+ 
+        <button type="button" id="addBtn" class="icon-btn icon-btn--accent" aria-label="Add a book or game">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9.2"></circle>
+            <path d="M12 8v8M8 12h8"></path>
+          </svg>
+        </button>
+ 
+        <button type="button" id="menuBtn" class="icon-btn" aria-label="Open menu" aria-expanded="false" aria-controls="sideMenu">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7h16M4 12h16M4 17h16"></path>
+          </svg>
+        </button>
+      </nav>
+    </header>
+ 
+    <!-- ===== Slide-down menu (hamburger) ===== -->
+    <nav id="sideMenu" class="side-menu" aria-label="Library tools" hidden>
+      <a class="side-menu__item" href="#" data-action="search">
+        <span class="side-menu__label">Search the collection</span>
+        <span class="side-menu__hint">Find a book or game by title, author, or genre</span>
+      </a>
+      <a class="side-menu__item" href="#" data-action="add">
+        <span class="side-menu__label">Add a book or game</span>
+        <span class="side-menu__hint">File it into your database</span>
+      </a>
+      <a class="side-menu__item" href="#" data-action="edit">
+        <span class="side-menu__label">Edit a description</span>
+        <span class="side-menu__hint">Update the notes on an existing entry</span>
+      </a>
+      <a class="side-menu__item" href="#" data-action="remove">
+        <span class="side-menu__label">Remove an entry</span>
+        <span class="side-menu__hint">Take a book or game out of the database</span>
+      </a>
+    </nav>
+ 
+    <!-- ===== Welcome banner ===== -->
+    <main class="content">
+      <p class="welcome" id="welcomeBanner">Welcome, <span id="userName">guest</span>, to your personal library!</p>
+ 
+      <!-- ===== Primary action tiles ===== -->
+      <section class="tiles" aria-label="Your library">
+        <button type="button" class="tile" data-route="/books">
+          <span class="tile__title">Your books</span>
+          <span class="tile__sub">Everything on your shelves, specifically for books</span>
+        </button>
+ 
+        <button type="button" class="tile" data-route="/games">
+          <span class="tile__title">Your games</span>
+          <span class="tile__sub">Everything in your collection, specifically for games</span>
+        </button>
+ 
+        <button type="button" class="tile tile--all" data-route="/all">
+          <span class="tile__title">Show everything</span>
+          <span class="tile__sub">Every book and game currently in the database</span>
+        </button>
+      </section>
+    </main>
+  </div>
+ 
+  <script src="script.js"></script>
+</body>
+</html>
