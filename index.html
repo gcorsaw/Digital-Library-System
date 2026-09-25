@@ -10,9 +10,8 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
- 
+
   <div class="app-frame">
- 
     <!-- ===== Top navigation ===== -->
     <header class="topbar">
       <button type="button" id="loginBtn" class="login-btn" aria-pressed="false">
@@ -22,7 +21,7 @@
         </svg>
         <span id="loginLabel">Log in</span>
       </button>
- 
+
       <nav class="icon-nav" aria-label="Primary">
         <button type="button" id="homeBtn" class="icon-btn" aria-label="Home" aria-current="page">
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -31,14 +30,14 @@
             <path d="M10 19v-5h4v5"></path>
           </svg>
         </button>
- 
+
         <button type="button" id="addBtn" class="icon-btn icon-btn--accent" aria-label="Add a book or game">
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="12" cy="12" r="9.2"></circle>
             <path d="M12 8v8M8 12h8"></path>
           </svg>
         </button>
- 
+
         <button type="button" id="menuBtn" class="icon-btn" aria-label="Open menu" aria-expanded="false" aria-controls="sideMenu">
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M4 7h16M4 12h16M4 17h16"></path>
@@ -46,16 +45,12 @@
         </button>
       </nav>
     </header>
- 
+
     <!-- ===== Slide-down menu (hamburger) ===== -->
     <nav id="sideMenu" class="side-menu" aria-label="Library tools" hidden>
       <a class="side-menu__item" href="#" data-action="search">
         <span class="side-menu__label">Search the collection</span>
         <span class="side-menu__hint">Find a book or game by title, author, or genre</span>
-      </a>
-      <a class="side-menu__item" href="#" data-action="add">
-        <span class="side-menu__label">Add a book or game</span>
-        <span class="side-menu__hint">File it into your database</span>
       </a>
       <a class="side-menu__item" href="#" data-action="edit">
         <span class="side-menu__label">Edit a description</span>
@@ -66,31 +61,80 @@
         <span class="side-menu__hint">Take a book or game out of the database</span>
       </a>
     </nav>
- 
+
     <!-- ===== Welcome banner ===== -->
     <main class="content">
       <p class="welcome" id="welcomeBanner">Welcome, <span id="userName">guest</span>, to your personal library!</p>
- 
+
       <!-- ===== Primary action tiles ===== -->
       <section class="tiles" aria-label="Your library">
         <button type="button" class="tile" data-route="/books">
           <span class="tile__title">Your books</span>
           <span class="tile__sub">Everything on your shelves, specifically for books</span>
         </button>
- 
+
         <button type="button" class="tile" data-route="/games">
           <span class="tile__title">Your games</span>
           <span class="tile__sub">Everything in your collection, specifically for games</span>
         </button>
- 
+
         <button type="button" class="tile tile--all" data-route="/all">
           <span class="tile__title">Show everything</span>
           <span class="tile__sub">Every book and game currently in the database</span>
         </button>
       </section>
+
+      <!-- ===== Results, filled in by script.js after a tile click ===== -->
+      <section id="results" class="results" hidden>
+        <h2 id="resultsTitle" class="results__title"></h2>
+        <ul id="resultsList" class="results__list"></ul>
+      </section>
     </main>
+
+    <!-- ===== Add book/game modal, opened by the "+" icon ===== -->
+    <div id="addModal" class="modal" hidden>
+      <div class="modal__panel">
+        <div class="modal__header">
+          <h2 class="modal__title">Add to your library</h2>
+          <button type="button" id="addModalClose" class="modal__close" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="modal__tabs" role="tablist">
+          <button type="button" class="modal__tab" data-kind="book" aria-pressed="true">Book</button>
+          <button type="button" class="modal__tab" data-kind="game" aria-pressed="false">Game</button>
+        </div>
+
+        <form id="addBookForm" class="modal__form">
+          <label>Title
+            <input name="book_title" required />
+          </label>
+          <label>ISBN <span class="modal__hint">(or leave blank and fill in an internal code instead)</span>
+            <input name="book_isbn" />
+          </label>
+          <label>Publish date
+            <input name="publish_date" type="date" />
+          </label>
+          <button type="submit" class="modal__submit">Add book</button>
+        </form>
+
+        <form id="addGameForm" class="modal__form" hidden>
+          <label>Title
+            <input name="game_title" required />
+          </label>
+          <label>Publisher
+            <input name="publisher" />
+          </label>
+          <label>Release date
+            <input name="release_date" type="date" />
+          </label>
+          <button type="submit" class="modal__submit">Add game</button>
+        </form>
+
+        <p id="addModalStatus" class="modal__status" aria-live="polite"></p>
+      </div>
+    </div>
   </div>
- 
+
   <script src="script.js"></script>
 </body>
 </html>

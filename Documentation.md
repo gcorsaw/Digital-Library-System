@@ -205,4 +205,8 @@
 * __Thursday(9/24/2025)__
     * The first task that I did today was that I researched some more for Cognito. This was interesting because there was more about Cognito that I didn't know about and I also found that there are were pros and cons to using Cognito for the Security. I spent about an hour reseraching the Cognito.
     * The second task that I worked on was the User Interface. It was a hard to get the project started because my HTML, CSS, and JavaScript were rusty and it took me a while to remember how the sytanx/structure worked for each aspect of the User interface.
-    
+
+* __Friday (9/25/2026)__
+    * The task that I spent the day working on was finishing writing the code for my user interface and making sure that it would work properly and it was difficult because there were errors in the code that I had a diffcult time finding. However, after all of the errors were found, the User Interface was able to function properly where I was able to remove and add books/games successfully to the database.
+    * I also had a meeting with my supervisor to discuss what I've been working on for the past week and we talked about testing the front end code for where my errors were coming from.
+    * The next task(s) that I intend on performing is modifying my code that would allow the users to remmove a book given a title rather than the specific id number for the book. I also intend to work on the login more as I had the front end default to a specific username rather than having the user login as themselves.
