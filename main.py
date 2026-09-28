@@ -152,8 +152,8 @@ the localhost:8000 to have our Angular to make the API requests to the FastAPI (
 """
 library_app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=False,  # tokens travel in the Authorization header, not cookies
+    allow_origins=["http://localhost:8080", "http://127.0.0.1:8080"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -261,7 +261,7 @@ def get_current_user(
             options={"require": ["exp", "sub"]},
         )
         user_id = int(payload["sub"])
-    except (jwt.PyJWTError, ValueError):
+    except (jwt.JWTError, ValueError):
         raise unauthorized
     cursor.execute(
         "SELECT user_id, username, email FROM reader_info WHERE user_id = %s;",
@@ -585,9 +585,10 @@ def description_removal(
         raise HTTPException(status_code=500, detail=f"Could not remove description: {str(e)}")
 
 
-@library_app.delete("/books/{book_id}")
+# === REPLACE FROM HERE ===
+@library_app.delete("/books")
 def delete_book_endpoint(
-    book_id: int,
+    book_title: str,
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
@@ -595,12 +596,17 @@ def delete_book_endpoint(
     try:
         cursor.execute(
             """
-            WITH removed AS (
-                DELETE FROM book_tracking WHERE user_id = %s AND book_id = %s RETURNING book_id
+            WITH targeted_book AS (
+                SELECT book_id FROM book_info WHERE LOWER(book_title) = LOWER(%s) LIMIT 1
+            ),
+            removed AS (
+                DELETE FROM book_tracking 
+                WHERE user_id = %s AND book_id = (SELECT book_id FROM targeted_book) 
+                RETURNING book_id
             )
             SELECT b.* FROM removed AS r JOIN book_info AS b ON b.book_id = r.book_id;
             """,
-            (user["user_id"], book_id),
+            (book_title.strip(), user["user_id"]),
         )
         removed = cursor.fetchone()
         if removed is None:
@@ -610,11 +616,12 @@ def delete_book_endpoint(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not remove book: {str(e)}")
+# === TO HERE ===
 
-
-@library_app.put("/books/{book_id}/description", response_model=Book_Description)
+# === REPLACE FROM HERE ===
+@library_app.put("/books/description", response_model=Book_Description)
 def description_change(
-    book_id: int,
+    book_title: str,
     summary: Book_Description_Update,
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
@@ -625,10 +632,10 @@ def description_change(
             UPDATE book_tracking AS t
             SET book_summary = %s
             FROM book_info AS b
-            WHERE b.book_id = t.book_id AND t.user_id = %s AND t.book_id = %s
+            WHERE b.book_id = t.book_id AND t.user_id = %s AND LOWER(b.book_title) = LOWER(%s)
             RETURNING b.book_id, b.book_title, t.book_summary AS book_description;
             """,
-            (summary.book_description, user["user_id"], book_id),
+            (summary.book_description, user["user_id"], book_title.strip()),
         )
         row = cursor.fetchone()
         if row is None:
@@ -638,7 +645,7 @@ def description_change(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not update description: {str(e)}")
-
+# === TO HERE ===
 
 """
 The seach_book_media_type function is going to be used to search for the books by their media type. 
@@ -1083,6 +1090,43 @@ def get_all_games(
         logging.exception("Database error in get_all_games")
         raise HTTPException(status_code=500, detail="Could not retrieve games") from error
 
+# === INSERT DIRECTLY ABOVE def main(): ===
+class BookProgressUpdate(BaseModel):
+    read_status: str = Field(..., description="'read' or 'want to read'")
+    rating: int | None = Field(default=None, ge=1, le=5, description="Rating from 1 to 5 stars")
+
+    @field_validator("read_status")
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        clean_v = v.strip().lower()
+        if clean_v not in ("read", "want to read"):
+            raise ValueError("read_status must be exactly 'read' or 'want to read'")
+        return clean_v
+
+@library_app.put("/books/progress")
+def update_book_progress_by_title(
+    book_title: str,
+    payload: BookProgressUpdate,
+    user: dict = Depends(get_current_user),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
+    try:
+        cursor.execute(
+            """
+            UPDATE book_tracking AS t
+            SET read_status = %s, rating = %s
+            FROM book_info AS b
+            WHERE b.book_id = t.book_id AND t.user_id = %s AND LOWER(b.book_title) = LOWER(%s)
+            RETURNING b.book_id, b.book_title, t.read_status, t.rating;
+            """,
+            (payload.read_status, payload.rating, user["user_id"], book_title.strip()),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Book not found in your library.")
+        return {"status": "success", "updated_record": dict(row)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Progress sync failed: {str(e)}")
 
 """In the main() function, we're going to print out a test to ensure that the file
 is working as it should be, after the print statement, we're going to try 

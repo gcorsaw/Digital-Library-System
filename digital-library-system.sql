@@ -184,18 +184,20 @@ CREATE TABLE IF NOT EXISTS reader_info (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT chk_auth_method CHECK (password_hash IS NOT NULL OR external_auth_id IS NOT NULL)
 );
- 
-CREATE TABLE IF NOT EXISTS book_tracking (
+
+-- Lines 187-197: Overwrote duplicate schema blocks with clean game trackers
+CREATE TABLE IF NOT EXISTS game_tracking (
     user_id INT REFERENCES reader_info(user_id) ON DELETE CASCADE,
-    book_id INT REFERENCES book_info(book_id) ON DELETE CASCADE,
-    book_summary VARCHAR(300),
-    book_ratings INT CHECK (book_ratings BETWEEN 1 AND 5),
-    read_status VARCHAR(10) NOT NULL DEFAULT 'want' CHECK (read_status IN ('want', 'reading', 'finished')),
+    game_id INT REFERENCES game_info(game_id) ON DELETE CASCADE,
+    game_notes TEXT,
+    game_ratings INT CHECK (game_ratings BETWEEN 1 AND 5),
+    play_status VARCHAR(30) NOT NULL DEFAULT 'want' CHECK (play_status IN ('want', 'owned', 'played', 'want to play')),
     added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (user_id, book_id)
+    PRIMARY KEY (user_id, game_id)
 );
- 
+
+
 CREATE TRIGGER trigger_book_tracking_updated
 BEFORE UPDATE ON book_tracking
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -209,15 +211,16 @@ CREATE TABLE IF NOT EXISTS reading_progress (
     FOREIGN KEY (user_id, book_id) REFERENCES book_tracking(user_id, book_id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS game_tracking (
+-- PASTE THIS BACK IN DIRECTLY BELOW THE reading_progress TABLE:
+CREATE TABLE IF NOT EXISTS book_tracking (
     user_id INT REFERENCES reader_info(user_id) ON DELETE CASCADE,
-    game_id INT REFERENCES game_info(game_id) ON DELETE CASCADE,
-    game_notes TEXT,
-    game_ratings INT CHECK (game_ratings BETWEEN 1 AND 5),
-    play_status VARCHAR(10) NOT NULL DEFAULT 'want' CHECK (play_status IN ('want', 'owned', 'played')),
+    book_id INT REFERENCES book_info(book_id) ON DELETE CASCADE,
+    book_summary VARCHAR(300),
+    book_ratings INT CHECK (book_ratings BETWEEN 1 AND 5),
+    read_status VARCHAR(30) NOT NULL DEFAULT 'want to read' CHECK (read_status IN ('read', 'want to read', 'reading', 'finished', 'unread')),
     added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (user_id, game_id)
+    PRIMARY KEY (user_id, book_id)
 );
 
 CREATE TRIGGER trigger_game_tracking_updated

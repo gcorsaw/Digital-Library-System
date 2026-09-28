@@ -22,7 +22,7 @@ from uuid import uuid4
 os.environ["DB_NAME"] = os.environ.get("TEST_DB_NAME", "digital_library_test")
 os.environ["JWT_SECRET_KEY"] = "test-only-secret-key-that-is-32-chars-or-more"
 
-import jwt
+from jose import jwt
 import psycopg2
 import pytest
 from fastapi.testclient import TestClient

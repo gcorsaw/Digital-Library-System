@@ -210,3 +210,8 @@
     * The task that I spent the day working on was finishing writing the code for my user interface and making sure that it would work properly and it was difficult because there were errors in the code that I had a diffcult time finding. However, after all of the errors were found, the User Interface was able to function properly where I was able to remove and add books/games successfully to the database.
     * I also had a meeting with my supervisor to discuss what I've been working on for the past week and we talked about testing the front end code for where my errors were coming from.
     * The next task(s) that I intend on performing is modifying my code that would allow the users to remmove a book given a title rather than the specific id number for the book. I also intend to work on the login more as I had the front end default to a specific username rather than having the user login as themselves.
+
+* __Monday (9/28/2026)__
+    * The first taks that I did was to add user authentication to the front end of my app. This was one of the easier tasks because it was just a matter of either removing testing data or modifying some of the code.
+    * After I got the code modified to ensure that it would allow users to create an account with a username, email, and a password. This is good because it would allow for the user to have their own account rather than having to use the account that was being used for testing.
+    * The second task that I intend on working on is to review the code and make any modifications to the front end or the code to ensure that it's how I like it for the project and to understand what the code is doing.

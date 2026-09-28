@@ -1,5 +1,5 @@
 // ============================================================
-// Digital Library — home screen interactions (Fully Patched)
+// Digital Library — home screen interactions (Fully Integrated)
 // ============================================================
 
 const loginBtn = document.getElementById("loginBtn");
@@ -19,29 +19,14 @@ const resultsSection = document.getElementById("results");
 const resultsTitle = document.getElementById("resultsTitle");
 const resultsList = document.getElementById("resultsList");
 
-const API_BASE = "http://localhost:8000";
-const MOCK_TOKEN = "Bearer local-test-admin-token";
+const API_BASE = "http://127.0.0.1:8000";
 
-// --- Login / logout -------------------------------------------------
-let isLoggedIn = false;
-let storedToken = localStorage.getItem("library_auth_token") || null;
+// --- Live Authentication Configuration ---
+const signupBtn = document.getElementById("signupBtn");
+const signupLabel = document.getElementById("signupLabel");
 
-function getUserFromToken(token){
-    if (!token || token === "Bearer local-test-admin-token") {
-        return { "username": "AlexLocalTest" };
-    }
-    try{
-        const parts = token.split('.');
-        const base64URL = parts.length === 3 ? parts[1] : token; // Extract index 1 string cleanly
-        const base64 = base64URL.replace(/-/g, '+').replace(/_/g, '/');
-        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c){
-            return '%' + ('00' + c.charCodeAt(0).toString(16).slice(-2)); 
-        }).join(''));
-        return JSON.parse(jsonPayload);
-    } catch(e){
-        return { "username": "AlexLocalTest" };
-    }
-}
+let currentAuthToken = localStorage.getItem("library_auth_token") || null;
+let currentUsername = localStorage.getItem("library_username") || "guest";
 
 function updateUsernameTitle(newUsername) {
   document.title = `${newUsername}'s Digital Library`;
@@ -53,22 +38,87 @@ function resetUsernameTitle() {
   userNameEl.textContent = "guest";
 }
 
-loginBtn.addEventListener("click", () => {
-  isLoggedIn = !isLoggedIn;
-  loginBtn.setAttribute("aria-pressed", String(isLoggedIn));
-
-  if (isLoggedIn) {
-    loginLabel.textContent = "Signing in\u2026";
-    loginBtn.disabled = true;
-
-    setTimeout(() => {
-      updateUsernameTitle("Alex");
-      loginLabel.textContent = "Log out";
-      loginBtn.disabled = false;
-    }, 1200);
+function syncAuthState() {
+  if (currentAuthToken) {
+    loginBtn.setAttribute("aria-pressed", "true");
+    loginLabel.textContent = "Log out";
+    if (signupBtn) signupBtn.hidden = true;
+    updateUsernameTitle(currentUsername);
   } else {
-    resetUsernameTitle();
+    loginBtn.setAttribute("aria-pressed", "false");
     loginLabel.textContent = "Log in";
+    if (signupBtn) signupBtn.hidden = false;
+    resetUsernameTitle();
+  }
+}
+
+if (signupBtn) {
+  signupBtn.addEventListener("click", async () => {
+    const username = prompt("Choose a username (3-30 chars):");
+    if (!username) return;
+    const email = prompt("Enter your email address:");
+    if (!email) return;
+    const password = prompt("Choose a password (min 8 chars):");
+    if (!password) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, email, password })
+      });
+      
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Registration failed");
+
+      localStorage.setItem("library_auth_token", data.access_token);
+      localStorage.setItem("library_username", data.user.username);
+      currentAuthToken = data.access_token;
+      currentUsername = data.user.username;
+      
+      alert(`Welcome to your digital library, ${currentUsername}! Account created successfully.`);
+      syncAuthState();
+    } catch (err) {
+      alert(`Registration Error: ${err.message}`);
+    }
+  });
+}
+
+loginBtn.addEventListener("click", async () => {
+  if (currentAuthToken) {
+    localStorage.removeItem("library_auth_token");
+    localStorage.removeItem("library_username");
+    currentAuthToken = null;
+    currentUsername = "guest";
+    syncAuthState();
+    if (resultsSection) resultsSection.hidden = true;
+  } else {
+    const usernameOrEmail = prompt("Enter your username or email:");
+    if (!usernameOrEmail) return;
+    const password = prompt("Enter your password:");
+    if (!password) return;
+
+    loginLabel.textContent = "Connecting...";
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: usernameOrEmail, password: password })
+      });
+      
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Login failed");
+
+      localStorage.setItem("library_auth_token", data.access_token);
+      localStorage.setItem("library_username", data.user.username);
+      currentAuthToken = data.access_token;
+      currentUsername = data.user.username;
+      
+      syncAuthState();
+    } catch (err) {
+      alert(`Login Failed: ${err.message}`);
+      syncAuthState();
+    }
   }
 });
 
@@ -98,7 +148,6 @@ if (modalTabs && modalTabs.length > 0) {
   });
 }
 
-// Connect UI Actions for showing and hiding the layout container
 addBtn.addEventListener("click", () => {
   if (addModal) addModal.hidden = false;
   if (addModalStatus) addModalStatus.textContent = "";
@@ -108,9 +157,23 @@ addModalClose.addEventListener("click", () => {
   if (addModal) addModal.hidden = true;
 });
 
+// --- API Context Request Helpers ---
+async function fetchJSON(path) {
+  const headers = {};
+  if (currentAuthToken) { 
+    headers["Authorization"] = `Bearer ${currentAuthToken}`; 
+  }
+
+  const res = await fetch(`${API_BASE}${path}`, { headers: headers });
+  if (!res.ok) {
+    throw new Error(`${path} responded with ${res.status}`);
+  }
+  return res.json();
+}
+
 async function submitEntry(path, payload) {
   const headers = { "Content-Type": "application/json" };
-  if (isLoggedIn) { headers["Authorization"] = MOCK_TOKEN; }
+  if (currentAuthToken) { headers["Authorization"] = `Bearer ${currentAuthToken}`; }
 
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
@@ -133,10 +196,11 @@ addBookForm.addEventListener("submit", async (event) => {
     book_isbn: formData.get("book_isbn") || null,
     publish_date: formData.get("publish_date") || null,
   };
-  addModalStatus.textContent = "Adding\u2026";
+  addModalStatus.textContent = "Adding…";
   try {
     await submitEntry("/books", payload);
     addModalStatus.textContent = "Book added.";
+    if (typeof routeHandlers["/books"] === "function") { await routeHandlers["/books"](); }
     addBookForm.reset();
     setTimeout(() => {
         if (addModal) addModal.hidden = true;
@@ -154,10 +218,11 @@ addGameForm.addEventListener("submit", async (event) => {
     publisher: formData.get("publisher") || null,
     release_date: formData.get("release_date") || null,
   };
-  addModalStatus.textContent = "Adding\u2026";
+  addModalStatus.textContent = "Adding…";
   try {
     await submitEntry("/games", payload);
     addModalStatus.textContent = "Game added.";
+    if (typeof routeHandlers["/games"] === "function") { await routeHandlers["/games"](); }
     addGameForm.reset();
     setTimeout(() => {
         if (addModal) addModal.hidden = true;
@@ -197,53 +262,75 @@ if (sideMenu) {
         if (!query) return;
         try {
           const data = await fetchJSON(`/books/search?title=${encodeURIComponent(query)}`);
-          renderResults(`Search results for "${query}"`, data.books.map(b => b.book_title));
+          renderResults(`Search results for "${query}"`, data.books.map(b => {
+            const statusStr = b.read_status ? ` [${b.read_status}]` : "";
+            const ratingStr = b.rating ? ` (${b.rating}★)` : "";
+            return `${b.book_title}${statusStr}${ratingStr}`;
+          }));
         } catch (err) { renderError(err.message); }
       } 
       else if (action === "edit") {
-        const bookId = prompt("Enter the Book ID you want to update:");
+        const bookTitle = prompt("Enter the exact Book Title you want to update:");
         const newDesc = prompt("Enter the new description:");
-        if (!bookId || !newDesc) return;
+        if (!bookTitle || !newDesc) return;
         try {
           const headers = { "Content-Type": "application/json" };
-          if (isLoggedIn) headers["Authorization"] = MOCK_TOKEN;
-          await fetch(`${API_BASE}/books/${bookId}/description`, {
+          if (currentAuthToken) headers["Authorization"] = `Bearer ${currentAuthToken}`;
+          const res = await fetch(`${API_BASE}/books/description?book_title=${encodeURIComponent(bookTitle)}`, {
             method: "PUT",
             headers: headers,
             body: JSON.stringify({ book_description: newDesc })
           });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || "Update failed");
           alert("Description updated successfully!");
+          if (typeof routeHandlers["/books"] === "function") { await routeHandlers["/books"](); }
         } catch (err) { alert(`Error: ${err.message}`); }
       }
       else if (action === "remove") {
-        const bookId = prompt("Enter the Book ID you want to permanently delete:");
-        if (!bookId) return;
-        if (!confirm("Are you sure you want to delete this entry?")) return;
+        const bookTitle = prompt("Enter the exact Book Title you want to permanently delete:");
+        if (!bookTitle) return;
+        if (!confirm(`Are you sure you want to delete "${bookTitle}"?`)) return;
         try {
           const headers = {};
-          if (isLoggedIn) headers["Authorization"] = MOCK_TOKEN;
-          await fetch(`${API_BASE}/books/${bookId}`, { method: "DELETE", headers: headers });
+          if (currentAuthToken) headers["Authorization"] = `Bearer ${currentAuthToken}`;
+          const res = await fetch(`${API_BASE}/books?book_title=${encodeURIComponent(bookTitle)}`, { method: "DELETE", headers: headers });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || "Deletion failed");
           alert("Entry deleted successfully!");
+          if (typeof routeHandlers["/books"] === "function") { await routeHandlers["/books"](); }
+        } catch (err) { alert(`Error: ${err.message}`); }
+      }
+      else if (action === "progress") {
+        const bookTitle = prompt("Enter the exact Book Title you want to log progress for:");
+        if (!bookTitle) return;
+        const statusChoice = prompt("Enter reading status (type 'read' or 'want to read'):");
+        if (!statusChoice) return;
+        let ratingChoice = null;
+        if (statusChoice.trim().toLowerCase() === "read") {
+          const ratingInput = prompt("Rate this book from 1 to 5 stars (Optional, leave blank if unrated):");
+          if (ratingInput) ratingChoice = parseInt(ratingInput, 10);
+        }
+        try {
+          const headers = { "Content-Type": "application/json" };
+          if (currentAuthToken) headers["Authorization"] = `Bearer ${currentAuthToken}`;
+          const res = await fetch(`${API_BASE}/books/progress?book_title=${encodeURIComponent(bookTitle)}`, {
+            method: "PUT",
+            headers: headers,
+            body: JSON.stringify({ read_status: statusChoice, rating: ratingChoice })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || "Progress update failed");
+          alert(`Successfully logged "${bookTitle}" as "${statusChoice}" with a ${ratingChoice || 'no'} star rating!`);
+          if (typeof routeHandlers["/books"] === "function") { await routeHandlers["/books"](); }
         } catch (err) { alert(`Error: ${err.message}`); }
       }
     });
   });
 }
 
-// --- Action tiles: fetch real data from the FastAPI backend --------------
-async function fetchJSON(path) {
-  const headers = {};
-  if (isLoggedIn) { 
-    headers["Authorization"] = MOCK_TOKEN; 
-  }
 
-  const res = await fetch(`${API_BASE}${path}`, { headers: headers });
-  if (!res.ok) {
-    throw new Error(`${path} responded with ${res.status}`);
-  }
-  return res.json();
-}
-
+// --- Action UI Data Rendering ---
 function renderResults(title, rows) {
   if (!resultsTitle || !resultsList || !resultsSection) return;
   resultsTitle.textContent = title;
@@ -263,6 +350,7 @@ function renderResults(title, rows) {
   resultsSection.style.display = "block";
 }
 
+// Global visual tracking component update logs
 function renderError(message) {
   if (!resultsTitle || !resultsList || !resultsSection) return;
   resultsTitle.textContent = "Couldn't load that";
@@ -276,7 +364,11 @@ function renderError(message) {
 const routeHandlers = {
   "/books": async () => {
     const data = await fetchJSON("/books"); 
-    renderResults("Your books", data.books.map((b) => b.book_title));
+    renderResults("Your books", data.books.map((b) => {
+      const statusStr = b.read_status ? ` [${b.read_status}]` : "";
+      const ratingStr = b.rating ? ` (${b.rating}★)` : "";
+      return `${b.book_title}${statusStr}${ratingStr}`;
+    }));
   },
   "/games": async () => {
     const data = await fetchJSON("/games");
@@ -288,7 +380,11 @@ const routeHandlers = {
       fetchJSON("/games"),
     ]);
     const rows = [
-      ...books.books.map((b) => `${b.book_title} (book)`),
+      ...books.books.map((b) => {
+        const statusStr = b.read_status ? ` [${b.read_status}]` : "";
+        const ratingStr = b.rating ? ` (${b.rating}★)` : "";
+        return `${b.book_title}${statusStr}${ratingStr} (book)`;
+      }),
       ...games.games.map((g) => `${g.game_title} (game)`),
     ];
     renderResults("Everything in your library", rows);
@@ -311,10 +407,5 @@ if(tiles){
 }
 
 window.addEventListener("DOMContentLoaded", () => {
-    isLoggedIn = true;
-    const loginBtnEl = document.getElementById("loginBtn");
-    const loginLabelEl = document.getElementById("loginLabel");
-    if (loginBtnEl) loginBtnEl.setAttribute("aria-pressed", "true");
-    if (loginLabelEl) loginLabelEl.textContent = "Log out";
-    updateUsernameTitle("AlexLocalTest");
+    syncAuthState();
 });

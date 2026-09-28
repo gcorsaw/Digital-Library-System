@@ -14,13 +14,19 @@
   <div class="app-frame">
     <!-- ===== Top navigation ===== -->
     <header class="topbar">
-      <button type="button" id="loginBtn" class="login-btn" aria-pressed="false">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="8" r="3.4"></circle>
-          <path d="M5 20c0-3.6 3.1-6.2 7-6.2s7 2.6 7 6.2"></path>
-        </svg>
-        <span id="loginLabel">Log in</span>
-      </button>
+      <div style="display: flex; gap: 6px; align-items: center;">
+        <button type="button" id="loginBtn" class="login-btn" aria-pressed="false">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="8" r="3.4"></circle>
+            <path d="M5 20c0-3.6 3.1-6.2 7-6.2s7 2.6 7 6.2"></path>
+          </svg>
+          <span id="loginLabel">Log in</span>
+        </button>
+
+        <button type="button" id="signupBtn" class="login-btn" style="background: var(--gold); color: var(--ink);">
+          <span id="signupLabel">Sign up</span>
+        </button>
+      </div>
 
       <nav class="icon-nav" aria-label="Primary">
         <button type="button" id="homeBtn" class="icon-btn" aria-label="Home" aria-current="page">
@@ -46,6 +52,7 @@
       </nav>
     </header>
 
+
     <!-- ===== Slide-down menu (hamburger) ===== -->
     <nav id="sideMenu" class="side-menu" aria-label="Library tools" hidden>
       <a class="side-menu__item" href="#" data-action="search">
@@ -60,7 +67,12 @@
         <span class="side-menu__label">Remove an entry</span>
         <span class="side-menu__hint">Take a book or game out of the database</span>
       </a>
+      <a class="side-menu__item" href="#" data-action="progress">
+        <span class="side-menu__label">Log Status & Rating</span>
+        <span class="side-menu__hint">Track reading progress and assign star ratings</span>
+      </a>
     </nav>
+
 
     <!-- ===== Welcome banner ===== -->
     <main class="content">
