@@ -585,6 +585,61 @@ def description_removal(
         raise HTTPException(status_code=500, detail=f"Could not remove description: {str(e)}")
 
 
+@library_app.delete("/books/{book_id}")
+def delete_book_by_id(
+    book_id: int,
+    user: dict = Depends(get_current_user),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
+    """Removes a book from the logged-in user's library by ID."""
+    try:
+        cursor.execute(
+            """
+            DELETE FROM book_tracking AS t
+            USING book_info AS b
+            WHERE b.book_id = t.book_id AND t.user_id = %s AND t.book_id = %s
+            RETURNING b.*;
+            """,
+            (user["user_id"], book_id),
+        )
+        removed = cursor.fetchone()
+        if removed is None:
+            raise HTTPException(status_code=404, detail=NOT_IN_LIBRARY)
+        return {"message": "Book removed from your library", "book": removed}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not remove book: {str(e)}")
+
+
+@library_app.put("/books/{book_id}/description", response_model=Book_Description)
+def description_change_by_id(
+    book_id: int,
+    summary: Book_Description_Update,
+    user: dict = Depends(get_current_user),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
+    try:
+        cursor.execute(
+            """
+            UPDATE book_tracking AS t
+            SET book_summary = %s
+            FROM book_info AS b
+            WHERE b.book_id = t.book_id AND t.user_id = %s AND t.book_id = %s
+            RETURNING b.book_id, b.book_title, t.book_summary AS book_description;
+            """,
+            (summary.book_description, user["user_id"], book_id),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=NOT_IN_LIBRARY)
+        return Book_Description(**row)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not update description: {str(e)}")
+
+
 # === REPLACE FROM HERE ===
 @library_app.delete("/books")
 def delete_book_endpoint(

@@ -1,14 +1,14 @@
 :root {
-  --bg-top: #e9f1fb;
-  --bg-bottom: #a3c6ec;
+  --bg-top: #f0f6fc;
+  --bg-bottom: #b8d4ec;
 
-  --navy: #1c2b45;
-  --navy-hover: #24365630;
-  --navy-hover-solid: #263a5c;
-  --ink: #14213a;
+  --navy: #1e3a5f;
+  --navy-hover: #26456f30;
+  --navy-hover-solid: #26456f;
+  --ink: #14304d;
 
-  --gold: #c99a44;
-  --gold-hover: #b8863a;
+  --gold: #5b9bd5;
+  --gold-hover: #4785bf;
 
   --text-light: #f5f8fc;
   --text-muted: #6b7c98;
@@ -46,7 +46,9 @@ body {
   padding: 32px 16px;
 }
 
-/* App frame */
+/* ============================================================
+   App frame
+   ============================================================ */
 .app-frame {
   width: 100%;
   max-width: 420px;
@@ -58,7 +60,9 @@ body {
   overflow: hidden;
 }
 
-/* Top bar */
+/* ============================================================
+   Top bar
+   ============================================================ */
 .topbar {
   display: flex;
   align-items: center;
@@ -150,7 +154,9 @@ body {
   color: var(--text-light);
 }
 
-/* Slide-down menu — matches index.html (.side-menu*) */
+/* ============================================================
+   Slide-down menu — class names now match index.html (.side-menu*)
+   ============================================================ */
 .side-menu {
   margin-top: 12px;
   border-radius: var(--radius-md);
@@ -188,7 +194,9 @@ body {
   color: var(--text-muted);
 }
 
-/* Welcome banner */
+/* ============================================================
+   Welcome banner
+   ============================================================ */
 .content {
   margin-top: 28px;
 }
@@ -211,7 +219,9 @@ body {
   font-style: italic;
 }
 
-/* Action tiles */
+/* ============================================================
+   Action tiles
+   ============================================================ */
 .tiles {
   display: flex;
   flex-direction: column;
@@ -267,14 +277,16 @@ body {
 }
 
 .tile--all .tile__sub {
-  color: rgba(20, 33, 58, 0.65);
+  color: rgba(20, 48, 77, 0.65);
 }
 
 .tile--all:hover {
   background: var(--gold-hover);
 }
 
-/* Results (filled in after a tile click) */
+/* ============================================================
+   Results (filled in after a tile click)
+   ============================================================ */
 .results {
   margin-top: 20px;
   background: rgba(255, 255, 255, 0.55);
@@ -312,9 +324,12 @@ body {
   padding-bottom: 0;
 }
 
-/* Add book/game modal — the [hidden] rule is what makes
-   .hidden = true actually work in script.js. No inline
-   style anywhere in index.html can out-rank it now. */
+/* ============================================================
+   Add book/game modal
+   The [hidden] rule below is what actually makes .hidden = true
+   work in script.js — this class has NO inline style anywhere
+   in index.html, so nothing can out-rank it.
+   ============================================================ */
 .modal {
   position: fixed;
   inset: 0;
@@ -433,7 +448,9 @@ body {
   min-height: 1.2em;
 }
 
-/* Small screens */
+/* ============================================================
+   Small screens
+   ============================================================ */
 @media (max-width: 380px) {
   .app-frame {
     padding: 16px 14px 24px;

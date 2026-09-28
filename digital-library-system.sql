@@ -198,6 +198,17 @@ CREATE TABLE IF NOT EXISTS game_tracking (
 );
 
 
+CREATE TABLE IF NOT EXISTS book_tracking (
+    user_id INT REFERENCES reader_info(user_id) ON DELETE CASCADE,
+    book_id INT REFERENCES book_info(book_id) ON DELETE CASCADE,
+    book_summary VARCHAR(300),
+    book_ratings INT CHECK (book_ratings BETWEEN 1 AND 5),
+    read_status VARCHAR(30) NOT NULL DEFAULT 'want to read' CHECK (read_status IN ('read', 'want to read', 'reading', 'finished', 'unread')),
+    added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, book_id)
+);
+
 CREATE TRIGGER trigger_book_tracking_updated
 BEFORE UPDATE ON book_tracking
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -212,16 +223,6 @@ CREATE TABLE IF NOT EXISTS reading_progress (
 );
 
 -- PASTE THIS BACK IN DIRECTLY BELOW THE reading_progress TABLE:
-CREATE TABLE IF NOT EXISTS book_tracking (
-    user_id INT REFERENCES reader_info(user_id) ON DELETE CASCADE,
-    book_id INT REFERENCES book_info(book_id) ON DELETE CASCADE,
-    book_summary VARCHAR(300),
-    book_ratings INT CHECK (book_ratings BETWEEN 1 AND 5),
-    read_status VARCHAR(30) NOT NULL DEFAULT 'want to read' CHECK (read_status IN ('read', 'want to read', 'reading', 'finished', 'unread')),
-    added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (user_id, book_id)
-);
 
 CREATE TRIGGER trigger_game_tracking_updated
 BEFORE UPDATE ON game_tracking
