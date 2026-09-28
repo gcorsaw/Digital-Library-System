@@ -1,7 +1,10 @@
+version: '3.8'
+
 services:
   my_postgres_db:
     image: postgres:16
     container_name: my_postgres_db
+    restart: always
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -10,7 +13,41 @@ services:
       - "5440:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./digital-library-system.sql:/docker-entrypoint-initdb.d/init.sql
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: library_fastapi_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      DB_HOST: my_postgres_db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+    depends_on:
+      - my_postgres_db
+
+  # Containerized Web Server to cleanly host your intended vanilla frontend
+  web_ui:
+    image: nginx:alpine
+    container_name: library_vanilla_frontend
+    restart: always
+    ports:
+      - "8080:80"
+    volumes:
+      # Mounts your custom frontend assets directly into Nginx's public web folder
+      - ./index.html:/usr/share/nginx/html/index.html
+      - ./script.js:/usr/share/nginx/html/script.js
+      - ./styles.css:/usr/share/nginx/html/styles.css
+    depends_on:
+      - backend
 
 volumes:
   pgdata:
-    external: true
+    driver: local
