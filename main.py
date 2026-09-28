@@ -1,6 +1,7 @@
 import os
+import re
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from typing import Generator
 import psycopg2
@@ -9,10 +10,12 @@ from psycopg2.pool import SimpleConnectionPool
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Depends, status
 from typing import Annotated
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi_cognito import CognitoAuth, CognitoSettings, CognitoToken
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import jwt
+from pwdlib import PasswordHash
 
 # Be sure to export environment variables before connecting
 # export DB_NAME=your-database-name
@@ -132,12 +135,15 @@ library_app = FastAPI(
     openapi_url="/openapi.json",
 )
 
-origins = [
-    "http://localhost:4200", #Angular development server
-    "http://localhost:4200/",
-    "http://localhost:8080", #Angular served by Nginx
-    "http://localhost:8080/",
-]
+# Browser origins allowed to call the API. Override with a comma-separated
+# CORS_ORIGINS environment variable if you serve the front end elsewhere.
+# (A page opened straight from disk via file:// is NOT allowed; serve it with
+# e.g. `python -m http.server 8080` inside the front-end folder.)
+DEFAULT_ORIGINS = (
+    "http://localhost:4200,http://localhost:8080,http://localhost:5500,http://localhost:3000,"
+    "http://127.0.0.1:4200,http://127.0.0.1:8080,http://127.0.0.1:5500,http://127.0.0.1:3000"
+)
+origins = [o.strip() for o in os.getenv("CORS_ORIGINS", DEFAULT_ORIGINS).split(",") if o.strip()]
 
 """
 The library_app.add_middlware() function is going to enable CORS, which is going to lalow the Angular frontend to call the python API (which is where library_app comes into play because library_app is the variable name
@@ -147,79 +153,10 @@ the localhost:8000 to have our Angular to make the API requests to the FastAPI (
 library_app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True,
+    allow_credentials=False,  # tokens travel in the Authorization header, not cookies
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-def get_auth_setting(name: str) -> str:
-    value = os.getenv(name)
-    if not value or not value.strip():
-        # PATCH ADDED HERE: Permits a dummy fallback string strictly during pytest runs
-        # so that Cognito doesn't throw a fatal RuntimeError before tests can start.
-        if os.getenv("TESTING") == "True":
-            return "mock-setting-value"
-        raise RuntimeError(f"Missing required authentication setting: {name}")
-    return value.strip()
-
-
-
-class LibraryCognitoToken(CognitoToken):
-    groups: list[str] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("cognito:groups", "groups"),
-    )
-
-
-cognito_settings = CognitoSettings(
-    check_expiration=True,
-    jwt_header_name="Authorization",
-    jwt_header_prefix="Bearer",
-    userpools={
-        "library": {
-            "region": get_auth_setting("COGNITO_REGION"),
-            "userpool_id": get_auth_setting("COGNITO_USER_POOL_ID"),
-            "app_client_id": get_auth_setting("COGNITO_APP_CLIENT_ID"),
-        }
-    },
-)
-cognito = CognitoAuth(
-    cognito_settings,
-    userpool_name="library",
-    custom_model=LibraryCognitoToken,
-)
-
-
-def get_current_user(
-    token: Annotated[LibraryCognitoToken, Depends(cognito.auth_required)],
-) -> dict:
-    #if os.getenv("TESTING") == "True":
-    return{
-            "username": "AlexLocalTest",
-            "cognito_id": "mock-id-12345",
-            "role": "admin",
-    }
-        
-    groups = {group.lower() for group in token.groups}
-    role = next(
-        (candidate for candidate in ("admin", "librarian") if candidate in groups),
-        "member",
-    )
-    return {
-        "username": token.username,
-        "cognito_id": token.cognito_id,
-        "role": role,
-    }
-
-
-def require_role(*allowed_roles: str):
-    def role_dependency(user: Annotated[dict, Depends(get_current_user)]) -> dict:
-        return {
-            "username": "AlexLocalTest",
-            "cognito_id": "mock-id-12345",
-            "role": "admin"
-        }
-    return role_dependency
 
 """
 This function is giong to get the database cursor and it's paramters contain a yielded value (RealDictCurosr), a
@@ -244,6 +181,146 @@ def get_db_cursor() -> Generator[RealDictCursor, None, None]:
     finally:
         cursor.close()
         db_manager.release_conn(connection)
+
+# ---------------------------------------------------------------------------
+# Authentication: accounts live in reader_info, sessions are signed JWTs.
+# Required environment variable: JWT_SECRET_KEY (random, 32+ characters).
+# Optional: JWT_EXPIRE_MINUTES (default 60).
+# ---------------------------------------------------------------------------
+password_hasher = PasswordHash.recommended()  # argon2
+# Hashed once at import so an unknown username costs the same time as a wrong password.
+_DUMMY_HASH = password_hasher.hash("timing-equalizer-not-a-real-password")
+bearer_scheme = HTTPBearer(auto_error=False)
+JWT_ALGORITHM = "HS256"
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,30}$")
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def get_jwt_secret() -> str:
+    secret = os.environ.get("JWT_SECRET_KEY", "").strip()
+    if len(secret) < 32:
+        raise RuntimeError("JWT_SECRET_KEY must be set to a random string of at least 32 characters")
+    return secret
+
+
+def create_access_token(user_id: int, username: str) -> str:
+    now = datetime.now(timezone.utc)
+    minutes = int(os.environ.get("JWT_EXPIRE_MINUTES", "60"))
+    payload = {
+        "sub": str(user_id),
+        "username": username,
+        "iat": now,
+        "exp": now + timedelta(minutes=minutes),
+    }
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    email: str
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("username")
+    @classmethod
+    def check_username(cls, value: str) -> str:
+        value = value.strip()
+        if not USERNAME_RE.match(value):
+            raise ValueError("Username must be 3-30 characters: letters, numbers, . _ -")
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def check_email(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) > 254 or not EMAIL_RE.match(value):
+            raise ValueError("Enter a valid email address")
+        return value
+
+
+class LoginRequest(BaseModel):
+    username: str  # a username or an email address
+    password: str
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+) -> dict:
+    unauthorized = HTTPException(
+        status_code=401,
+        detail="Please log in to continue.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    if credentials is None:
+        raise unauthorized
+    try:
+        payload = jwt.decode(
+            credentials.credentials,
+            get_jwt_secret(),
+            algorithms=[JWT_ALGORITHM],
+            options={"require": ["exp", "sub"]},
+        )
+        user_id = int(payload["sub"])
+    except (jwt.PyJWTError, ValueError):
+        raise unauthorized
+    cursor.execute(
+        "SELECT user_id, username, email FROM reader_info WHERE user_id = %s;",
+        (user_id,),
+    )
+    user = cursor.fetchone()
+    if user is None:
+        raise unauthorized
+    return dict(user)
+
+
+@library_app.post("/auth/register", status_code=status.HTTP_201_CREATED)
+def register(body: RegisterRequest, cursor: RealDictCursor = Depends(get_db_cursor)):
+    try:
+        cursor.execute(
+            """
+            INSERT INTO reader_info (username, email, password_hash)
+            VALUES (%s, %s, %s)
+            RETURNING user_id, username, email;
+            """,
+            (body.username, body.email, password_hasher.hash(body.password)),
+        )
+    except psycopg2.errors.UniqueViolation:
+        raise HTTPException(status_code=409, detail="That username or email is already registered.")
+    user = cursor.fetchone()
+    return {
+        "access_token": create_access_token(user["user_id"], user["username"]),
+        "token_type": "bearer",
+        "user": dict(user),
+    }
+
+
+@library_app.post("/auth/login")
+def login(body: LoginRequest, cursor: RealDictCursor = Depends(get_db_cursor)):
+    identifier = body.username.strip()
+    cursor.execute(
+        """
+        SELECT user_id, username, email, password_hash
+        FROM reader_info
+        WHERE username = %s OR email = %s;
+        """,
+        (identifier, identifier),
+    )
+    user = cursor.fetchone()
+    stored_hash = user["password_hash"] if user and user["password_hash"] else _DUMMY_HASH
+    password_ok = password_hasher.verify(body.password, stored_hash)
+    if not (user and user["password_hash"] and password_ok):
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    return {
+        "access_token": create_access_token(user["user_id"], user["username"]),
+        "token_type": "bearer",
+        "user": {"user_id": user["user_id"], "username": user["username"], "email": user["email"]},
+    }
+
+
+@library_app.get("/auth/me")
+def read_me(user: dict = Depends(get_current_user)):
+    return {"user": user}
+
 
 """
 The connect() function is going to create a connection to the database. The try block is going to create the connection to the database and the cursor is going to also make a connection.
@@ -312,7 +389,7 @@ class Book_Description(BaseModel):
     book_description: str | None = None
 
 class Book_Description_Update(BaseModel):
-    book_description: str
+    book_description: str = Field(min_length=1, max_length=300)  # column is VARCHAR(300)
 
 @library_app.get("/")
 def read_root():
@@ -320,11 +397,23 @@ def read_root():
 
 
 @library_app.get("/books")
-def get_book_endpoint(cursor: RealDictCursor = Depends(get_db_cursor)):
+def get_book_endpoint(
+    user: dict = Depends(get_current_user),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
+    """Books in the logged-in user's own library (not the whole shared catalog)."""
     try:
-        cursor.execute("SELECT * FROM book_info ORDER BY book_title;")
-        books = cursor.fetchall()
-        return {"books" : books}
+        cursor.execute(
+            """
+            SELECT b.*, t.read_status, t.book_summary
+            FROM book_tracking AS t
+            JOIN book_info AS b ON b.book_id = t.book_id
+            WHERE t.user_id = %s
+            ORDER BY b.book_title;
+            """,
+            (user["user_id"],),
+        )
+        return {"books": cursor.fetchall()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -371,66 +460,59 @@ def get_details_from_database(cursor: RealDictCursor = Depends(get_db_cursor)):
 @library_app.post("/books", status_code=status.HTTP_201_CREATED)
 def user_add_book(
     book: Book,
-    #_user: dict = Depends(require_role("librarian", "admin")),
+    user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
-    """The first except block is going to be used to catch the psycopg2.errors.UniqueViolation error.
-    This error is going to be raised if the user tries to add a book with an ISBN that already exists in the database. 
-    The second except block is going to be used to catch the psy. The third 
-    except block is going to be used to catch any other exceptions that may occur.
-    The finally block is going to be used to close the connection to the database if it is not None. 
-    This is going to ensure that the connection to the database is closed even if an error occurs.
-    This is going to prevent any potential memory leaks or other issues that may arise from leaving the connection open."""
+    """Adds a book to the logged-in user's library. The shared catalog entry is
+    reused when the ISBN / internal code already exists, otherwise it is created."""
     try:
         cursor.execute(
             """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = 'book_info'
-              AND column_name = 'internal_code';
-            """
-        )
-        has_internal_code = cursor.fetchone() is not None
-        insert_columns = ["book_isbn", "book_title", "publish_date"]
-        insert_values = [book.book_isbn, book.book_title, book.publish_date]
-        if has_internal_code:
-            insert_columns.insert(1, "internal_code")
-            insert_values.insert(1, book.internal_code)
-        query = f"""
-            INSERT INTO book_info ({', '.join(insert_columns)})
-            VALUES ({', '.join(['%s'] * len(insert_columns))})
-            RETURNING *;
-        """
-        cursor.execute(
-            query,
-            insert_values,
+            SELECT * FROM book_info
+            WHERE (%s::text IS NOT NULL AND book_isbn = %s)
+               OR (%s::text IS NOT NULL AND internal_code = %s);
+            """,
+            (book.book_isbn, book.book_isbn, book.internal_code, book.internal_code),
         )
         new_book = cursor.fetchone()
 
-        if book.author_id is not None and book.creator_role_id is not None:
+        if new_book is None:
             cursor.execute(
                 """
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_name = 'book_author'
-                  AND column_name = 'creator_role_id';
-                """
+                INSERT INTO book_info (book_isbn, internal_code, book_title, publish_date)
+                VALUES (%s, %s, %s, %s)
+                RETURNING *;
+                """,
+                (book.book_isbn, book.internal_code, book.book_title, book.publish_date),
             )
-            has_role_id = cursor.fetchone() is not None
-            role_column = "creator_role_id" if has_role_id else "creator_role"
-            cursor.execute(
-                f"INSERT INTO book_author (book_id, author_id, {role_column}) VALUES (%s, %s, %s);",
-                (new_book["book_id"], book.author_id, book.creator_role_id),
-            )
+            new_book = cursor.fetchone()
+
+            if book.author_id is not None and book.creator_role_id is not None:
+                cursor.execute(
+                    "INSERT INTO book_author (book_id, author_id, creator_role_id) VALUES (%s, %s, %s);",
+                    (new_book["book_id"], book.author_id, book.creator_role_id),
+                )
+
+        cursor.execute(
+            """
+            INSERT INTO book_tracking (user_id, book_id)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+            RETURNING book_id;
+            """,
+            (user["user_id"], new_book["book_id"]),
+        )
+        if cursor.fetchone() is None:
+            raise HTTPException(status_code=409, detail="This book is already in your library.")
 
         return {"message": "Book added successfully", "book": new_book}
     except psycopg2.errors.UniqueViolation:
-        raise HTTPException(status_code=409, detail="A book with this ISBN already exists.")
+        raise HTTPException(status_code=409, detail="A book with this ISBN or code already exists.")
     except psycopg2.errors.ForeignKeyViolation:
-        raise HTTPException(status_code=400, detail="Invalid author_id. The author does not exist.")
+        raise HTTPException(status_code=400, detail="Invalid author_id or creator_role_id.")
     except psycopg2.errors.CheckViolation:
         raise HTTPException(status_code=400, detail="Book must have either an ISBN or an internal_code.")
-    except psycopg2.Error as e:
+    except psycopg2.Error:
         logging.exception("Database error in user_add_book")
         raise HTTPException(status_code=500, detail="A database error occurred while adding the book.")
 
@@ -445,49 +527,58 @@ The % symbols are going to be used to indicate that the search patten can be
 anywhere in the book_title string. The cursor is going to fetch all of the results and return them as a dictionary with the query and books as the keys.
 """
 @library_app.get("/books/search")
-def search_title_by_word(title: str = Query(...), cursor: RealDictCursor = Depends(get_db_cursor)):
+def search_title_by_word(
+    title: str = Query(...),
+    user: dict = Depends(get_current_user),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
+    """Searches the titles in the logged-in user's own library."""
     if not title or not title.strip():
         raise HTTPException(status_code=400, detail="Title is required")
     title = title.strip()
 
     try:
-        query = """ 
-                SELECT * 
-                FROM book_info 
-                WHERE book_title ILIKE %s 
-                ORDER BY book_title;
-        """
-        search_patten = f"%{title}%"
-        cursor.execute(query, (search_patten,))
-        results = cursor.fetchall()
-        return {"query": title, "books": results}
+        cursor.execute(
+            """
+            SELECT b.*, t.read_status, t.book_summary
+            FROM book_tracking AS t
+            JOIN book_info AS b ON b.book_id = t.book_id
+            WHERE t.user_id = %s AND b.book_title ILIKE %s
+            ORDER BY b.book_title;
+            """,
+            (user["user_id"], f"%{title}%"),
+        )
+        return {"query": title, "books": cursor.fetchall()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+# The "description" of a book is the user's own note (book_tracking.book_summary),
+# so editing it never changes what other users see.
+NOT_IN_LIBRARY = "Book not found in your library"
 
 
 @library_app.delete("/books/{book_id}/description", response_model=Book_Description)
 def description_removal(
     book_id: int,
-    _user: dict = Depends(require_role("librarian", "admin")),
+    user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
     try:
         cursor.execute(
             """
-            UPDATE book_info
-            SET book_description = NULL
-            WHERE book_id = %s
-            RETURNING book_id, book_title, book_description;
+            UPDATE book_tracking AS t
+            SET book_summary = NULL
+            FROM book_info AS b
+            WHERE b.book_id = t.book_id AND t.user_id = %s AND t.book_id = %s
+            RETURNING b.book_id, b.book_title, t.book_summary AS book_description;
             """,
-            (book_id,),
+            (user["user_id"], book_id),
         )
-        removed_description = cursor.fetchone()
-
-        if removed_description is None:
-            raise HTTPException(status_code=404, detail="Book not found")
-
-        return Book_Description(**removed_description)
-
+        row = cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=NOT_IN_LIBRARY)
+        return Book_Description(**row)
     except HTTPException:
         raise
     except Exception as e:
@@ -497,47 +588,57 @@ def description_removal(
 @library_app.delete("/books/{book_id}")
 def delete_book_endpoint(
     book_id: int,
-    _user: dict = Depends(require_role("admin")),
+    user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Removes a book from the logged-in user's library (other users keep theirs)."""
     try:
         cursor.execute(
-            "DELETE FROM book_info WHERE book_id = %s RETURNING *;",
-            (book_id,),
+            """
+            WITH removed AS (
+                DELETE FROM book_tracking WHERE user_id = %s AND book_id = %s RETURNING book_id
+            )
+            SELECT b.* FROM removed AS r JOIN book_info AS b ON b.book_id = r.book_id;
+            """,
+            (user["user_id"], book_id),
         )
-        deleted_book = cursor.fetchone()
-
-        if deleted_book is None:
-            raise HTTPException(status_code=404, detail="Book not found")
-
-        return {"message": "Book deleted successfully", "book": deleted_book}
-
+        removed = cursor.fetchone()
+        if removed is None:
+            raise HTTPException(status_code=404, detail=NOT_IN_LIBRARY)
+        return {"message": "Book removed from your library", "book": removed}
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Could not delete book: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Could not remove book: {str(e)}")
 
 
 @library_app.put("/books/{book_id}/description", response_model=Book_Description)
 def description_change(
     book_id: int,
     summary: Book_Description_Update,
-    _user: dict = Depends(require_role("librarian", "admin")),
+    user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
     try:
         cursor.execute(
-            "UPDATE book_info SET book_description = %s WHERE book_id = %s RETURNING book_id, book_title, book_description;",
-            (summary.book_description, book_id),
+            """
+            UPDATE book_tracking AS t
+            SET book_summary = %s
+            FROM book_info AS b
+            WHERE b.book_id = t.book_id AND t.user_id = %s AND t.book_id = %s
+            RETURNING b.book_id, b.book_title, t.book_summary AS book_description;
+            """,
+            (summary.book_description, user["user_id"], book_id),
         )
-        updated_book = cursor.fetchone()
-        if updated_book is None:
-            raise HTTPException(status_code = 404, detail= "Book not found")
-        return Book_Description(**updated_book)
+        row = cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=NOT_IN_LIBRARY)
+        return Book_Description(**row)
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException (status_code=500, detail=f"Could not update description: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Could not update description: {str(e)}")
+
 
 """
 The seach_book_media_type function is going to be used to search for the books by their media type. 
@@ -913,76 +1014,75 @@ is no confusion in the code about which variables are going to be used."""
 @library_app.post("/games", status_code=status.HTTP_201_CREATED)
 def add_game(
     game: Game,
-    #_user: dict = Depends(require_role("librarian", "admin")),
+    user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Adds a game to the logged-in user's library, reusing the shared catalog
+    entry when a game with the same title already exists."""
     try:
+        cursor.execute("SELECT * FROM game_info WHERE game_title = %s;", (game.game_title,))
+        new_game = cursor.fetchone()
+        if new_game is None:
+            cursor.execute(
+                """
+                INSERT INTO game_info(
+                    game_title, publisher, release_date, min_players, max_players,
+                    play_time_minutes, min_age, game_description
+                )
+                VALUES(%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *;
+                """,
+                (
+                    game.game_title, game.publisher, game.release_date, game.min_players,
+                    game.max_players, game.play_time_minutes, game.min_age, game.game_description,
+                ),
+            )
+            new_game = cursor.fetchone()
+
         cursor.execute(
             """
-            INSERT INTO game_info(
-                game_title,
-                publisher,
-                release_date,
-                min_players,
-                max_players,
-                play_time_minutes,
-                min_age,
-                game_description
-            )
-            VALUES(%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING *;
+            INSERT INTO game_tracking (user_id, game_id)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+            RETURNING game_id;
             """,
-            (
-                game.game_title.strip(),
-                game.publisher.strip() if game.publisher else None,
-                game.release_date,
-                game.min_players,
-                game.max_players,
-                game.play_time_minutes,
-                game.min_age,
-                game.game_description,
-            ),
+            (user["user_id"], new_game["game_id"]),
         )
-        new_game = cursor.fetchone()
-        return{
-            "message": "Game added successfully",
-            "game": new_game,
-        }
+        if cursor.fetchone() is None:
+            raise HTTPException(status_code=409, detail="This game is already in your library.")
+
+        return {"message": "Game added successfully", "game": new_game}
     except psycopg2.errors.UniqueViolation:
-        raise HTTPException(
-            status_code = 409,
-            detail ="A game with this title already exists.",
-        )
+        raise HTTPException(status_code=409, detail="A game with this title already exists.")
     except psycopg2.errors.CheckViolation:
-        raise HTTPException(
-            status_code=400,
-            detail="Game data violates a dtabase constraint.",
-        )
+        raise HTTPException(status_code=400, detail="Game data violates a database constraint.")
     except psycopg2.Error:
         logging.exception("Database error while adding games")
-        raise HTTPException(
-            status_code = 500,
-            detail= "A database error occurred while adding the game.",
-        )
+        raise HTTPException(status_code=500, detail="A database error occurred while adding the game.")
 
-""""""
+
 @library_app.get("/games")
-def get_all_games(cursor: RealDictCursor = Depends(get_db_cursor)):
+def get_all_games(
+    user: dict = Depends(get_current_user),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
+    """Games in the logged-in user's own library."""
     try:
         cursor.execute(
             """
-            SELECT *
-            FROM game_info
-            ORDER BY game_title;
-            """
+            SELECT g.*, t.play_status, t.game_notes
+            FROM game_tracking AS t
+            JOIN game_info AS g ON g.game_id = t.game_id
+            WHERE t.user_id = %s
+            ORDER BY g.game_title;
+            """,
+            (user["user_id"],),
         )
         return {"games": cursor.fetchall()}
     except psycopg2.Error as error:
         logging.exception("Database error in get_all_games")
-        raise HTTPException(
-            status_code=500,
-            detail="Could not retrieve games",
-        ) from error
+        raise HTTPException(status_code=500, detail="Could not retrieve games") from error
+
 
 """In the main() function, we're going to print out a test to ensure that the file
 is working as it should be, after the print statement, we're going to try 
