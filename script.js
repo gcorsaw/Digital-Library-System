@@ -21,6 +21,10 @@ const resultsList = document.getElementById("resultsList");
 
 const API_BASE = "http://127.0.0.1:8000";
 
+const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? 'http://localhost:8000/api'
+    : '/api'
+
 // --- Live Authentication Configuration ---
 const signupBtn = document.getElementById("signupBtn");
 const signupLabel = document.getElementById("signupLabel");

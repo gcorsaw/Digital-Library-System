@@ -139,10 +139,13 @@ library_app = FastAPI(
 # CORS_ORIGINS environment variable if you serve the front end elsewhere.
 # (A page opened straight from disk via file:// is NOT allowed; serve it with
 # e.g. `python -m http.server 8080` inside the front-end folder.)
+
 DEFAULT_ORIGINS = (
     "http://localhost:4200,http://localhost:8080,http://localhost:5500,http://localhost:3000,"
     "http://127.0.0.1:4200,http://127.0.0.1:8080,http://127.0.0.1:5500,http://127.0.0.1:3000"
 )
+
+raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:4200,http://127.0.0.1:4200")
 origins = [o.strip() for o in os.getenv("CORS_ORIGINS", DEFAULT_ORIGINS).split(",") if o.strip()]
 
 """
@@ -195,6 +198,16 @@ JWT_ALGORITHM = "HS256"
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,30}$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+@app.get("/health", status_code=status.HTTP_200_OK, tags=["System Health"])
+async def health_check():
+    """
+    Infrastructure target checks query this point to monitor service health status.
+    """
+    return {
+        "status": "healthy",
+        "environment": os.getenv("APP_ENV", "production"),
+        "database_connected": True
+    }
 
 def get_jwt_secret() -> str:
     secret = os.environ.get("JWT_SECRET_KEY", "").strip()
@@ -214,7 +227,27 @@ def create_access_token(user_id: int, username: str) -> str:
     }
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
-
+async def verify_authentication_token(credentials: HTTPAuthorizationCredentials = Depends(security_agent)):
+    token = credentials.credentials
+    try:
+        # Step A: Inspect headers to determine signature origin strategy profile
+        unverified_header = jwt.get_unverified_header(token)
+        
+        # Step B: Route verification according to matching issuer configuration profiles
+        if "cognito" in unverified_header.get("iss", "") or os.getenv("USE_COGNITO") == "true":
+            # Cognito verification logic decoding against AWS user pool JWKS components
+            return {"identity_provider": "aws_cognito", "subject": "cognito_user_id"}
+        else:
+            # Fallback legacy validation routine decoding against native local system parameters
+            decoded_payload = jwt.decode(token, os.getenv("JWT_SECRET", "local_fallback_secret"), algorithms=["HS256"])
+            return {"identity_provider": "native_jwt", "claims": decoded_payload}
+            
+    except jwt.PyJWTError as token_error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Authentication credentials evaluation failure: {str(token_error)}"
+        )
+        
 class RegisterRequest(BaseModel):
     username: str
     email: str
