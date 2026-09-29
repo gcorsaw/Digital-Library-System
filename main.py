@@ -27,54 +27,13 @@ def get_cognito_public_keys():
         user_pool_id = os.getenv("COGNITO_USER_POOL_ID")
         if not user_pool_id:
             return []
-        url = f"https://cognito-idp.{region}://{user_pool_id}/.well-known/jwks.json"
+        url = f"https://cognito-idp.{region}.amazonaws.com/{user_pool_id}/.well-known/jwks.json"
         try:
             _COGNITO_JWKS = requests.get(url).json().get("keys", [])
         except Exception:
             logging.exception("Failed to pull Cognito JWKS certificates")
             return []
     return _COGNITO_JWKS
-
-async def verify_cognito_or_jwt(credentials: HTTPAuthorizationCredentials = Depends(security_agent)):
-    if not credentials:
-        raise HTTPException(status_code=401, detail="Please log in to continue.")
-    token = credentials.credentials
-    try:
-        unverified_header = jwt.get_unverified_header(token)
-        issuer = unverified_header.get("iss", "")
-        
-        if "cognito" in issuer or os.getenv("USE_COGNITO") == "true":
-            # Real production verification against Cloud identity public keys
-            keys = get_cognito_public_keys()
-            kid = unverified_header.get("kid")
-            public_key = next((k for k in keys if k["kid"] == kid), None)
-            
-            if not public_key:
-                raise jwt.PyJWTError("Matching cloud validation certificate key not found")
-                
-            # Construct the verification key parameters
-            region = os.getenv("AWS_REGION", "us-east-1")
-            user_pool_id = os.getenv("COGNITO_USER_POOL_ID")
-            expected_iss = f"https://cognito-idp.{region}://{user_pool_id}"
-            
-            # Decode using public certificate parameters from AWS User Pool
-            decoded_payload = jwt.decode(
-                token, 
-                public_key, 
-                algorithms=["RS256"], 
-                audience=os.getenv("COGNITO_CLIENT_ID"),
-                issuer=expected_iss
-            )
-            return {
-                "identity_provider": "aws_cognito", 
-                "user_id": decoded_payload.get("sub"), 
-                "username": decoded_payload.get("username")
-            }
-        else:
-            decoded_payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
-            return {"identity_provider": "native_jwt", "user_id": int(decoded_payload["sub"]), "username": decoded_payload["username"]}
-    except jwt.PyJWTError as token_error:
-        raise HTTPException(status_code=401, detail=f"Invalid token credentials: {str(token_error)}")
 
 try:
     from dotenv import load_dotenv
@@ -179,6 +138,7 @@ def get_db_cursor() -> Generator[RealDictCursor, None, None]:
 
 password_hasher = PasswordHash.recommended()
 _DUMMY_HASH = password_hasher.hash("timing-equalizer-not-a-real-password")
+_COGNITO_JWKS = None
 security_agent = HTTPBearer(auto_error=False)
 JWT_ALGORITHM = "HS256"
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,30}$")
@@ -217,8 +177,32 @@ async def verify_cognito_or_jwt(credentials: HTTPAuthorizationCredentials = Depe
     token = credentials.credentials
     try:
         unverified_header = jwt.get_unverified_header(token)
-        if "cognito" in unverified_header.get("iss", "") or os.getenv("USE_COGNITO") == "true":
-            return {"identity_provider": "aws_cognito", "user_id": "cognito_user_id", "username": "cognito_user"}
+        issuer = unverified_header.get("iss", "")
+        
+        if "cognito" in issuer or os.getenv("USE_COGNITO") == "true":
+            keys = get_cognito_public_keys()
+            kid = unverified_header.get("kid")
+            public_key = next((k for k in keys if k["kid"] == kid), None)
+            
+            if not public_key:
+                raise jwt.PyJWTError("Matching cloud validation certificate key not found")
+                
+            region = os.getenv("AWS_REGION", "us-east-1")
+            user_pool_id = os.getenv("COGNITO_USER_POOL_ID")
+            expected_iss = f"https://cognito-idp.{region}.amazonaws.com/{user_pool_id}"
+            
+            decoded_payload = jwt.decode(
+                token, 
+                public_key, 
+                algorithms=["RS256"], 
+                audience=os.getenv("COGNITO_CLIENT_ID"),
+                issuer=expected_iss
+            )
+            return {
+                "identity_provider": "aws_cognito", 
+                "user_id": decoded_payload.get("sub"), 
+                "username": decoded_payload.get("username")
+            }
         else:
             decoded_payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
             return {"identity_provider": "native_jwt", "user_id": int(decoded_payload["sub"]), "username": decoded_payload["username"]}
@@ -387,10 +371,9 @@ class Book_Description_Update(BaseModel):
 def read_root():
     return {"message": "Hello World"}
 
-# Original function name preserved exactly from your repository file layout
 @library_app.get("/books")
 def get_books(
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(verify_cognito_or_jwt),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
     try:
@@ -720,7 +703,7 @@ def get_comic_book_from_database(comic: str = Query(...), cursor: RealDictCursor
             ORDER BY b.book_title;
         """
         cursor.execute(query, (f"%{comic_book}%",))
-        return {"comic_books": comic_book_results}
+        return {"comic_books": cursor.fetchall()}
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error))
 
@@ -834,7 +817,7 @@ class Game(BaseModel):
 @library_app.post("/games", status_code=status.HTTP_201_CREATED)
 def add_game(
     game: Game,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(verify_cognito_or_jwt),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
     try:
@@ -873,7 +856,7 @@ def add_game(
         raise HTTPException(status_code=500, detail=str(e))
 
 @library_app.get("/games")
-def get_all_games(user: dict = Depends(get_current_user), cursor: RealDictCursor = Depends(get_db_cursor)):
+def get_all_games(user: dict = Depends(verify_cognito_or_jwt), cursor: RealDictCursor = Depends(get_db_cursor)):
     try:
         cursor.execute(
             """
@@ -905,7 +888,7 @@ class BookProgressUpdate(BaseModel):
 def update_book_progress_by_title(
     book_title: str,
     payload: BookProgressUpdate,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(verify_cognito_or_jwt),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
     try:
