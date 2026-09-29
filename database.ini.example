@@ -1,0 +1,6 @@
+[postgresql]
+host=localhost
+database=digital_library
+user=postgres
+password=secretpassword
+port=5440

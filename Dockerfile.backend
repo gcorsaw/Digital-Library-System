@@ -1,21 +1,30 @@
-FROM python:3.10-slim
+# Dockerfile.backend
+# Multi-stage production build structure for Python containers
+FROM ghcr.io/astral-sh/uv:python3.10-alpine AS builder
 
 WORKDIR /app
 
-# Copy dependency specifications
+# Enable dependency layer caching optimization maps
 COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
 
-# Install project dependencies
-RUN pip install --no-cache-dir .
+# Final execution image layer
+FROM python:3.10-slim AS runner
 
-# Copy application layers
+WORKDIR /app
+
+# Copy runtime binaries and virtual environment configurations from builder stage
+COPY --from=builder /app/.venv /app/.venv
 COPY main.py .
 
-# EXPOSE CONFIGURATION PORTS: Match your backend service port
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Expose backend proxy connection mapping networks
 EXPOSE 8000
 
-# CLOUD ENVIRONMENT VARIABLES: 
-# Terraform will inject these values automatically during container start
+# Cloud environment arguments populated automatically by Terraform clusters
+ENV APP_ENV="production"
 ENV DB_HOST=""
 ENV DB_PORT="5440"
 ENV DB_NAME=""

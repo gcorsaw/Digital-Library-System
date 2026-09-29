@@ -20,6 +20,16 @@ from argon2 import PasswordHash
 # Initialize dotenv manually if needed or fallback safely
 _COGNITO_JWKS = None
 
+def load_db_config():
+    # Fallback to local development credentials if variables aren't set yet
+    return {
+        "host": os.getenv("DB_HOST", "localhost"),
+        "database": os.getenv("DB_NAME", "digital_library"),
+        "user": os.getenv("DB_USER", "postgres"),
+        "password": os.getenv("DB_PASSWORD", "secretpassword"),
+        "port": os.getenv("DB_PORT", "5440")
+    }
+
 def get_cognito_public_keys():
     global _COGNITO_JWKS
     if _COGNITO_JWKS is None:
