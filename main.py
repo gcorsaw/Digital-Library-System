@@ -5,6 +5,7 @@ import jwt
 import logging
 import uvicorn
 import psycopg2
+import requests
 from datetime import datetime, timedelta, timezone, date
 from typing import List, Optional, Generator
 from fastapi import FastAPI, Depends, HTTPException, status, Query
@@ -17,6 +18,64 @@ from psycopg2.pool import SimpleConnectionPool
 from argon2 import PasswordHash
 
 # Initialize dotenv manually if needed or fallback safely
+_COGNITO_JWKS = None
+
+def get_cognito_public_keys():
+    global _COGNITO_JWKS
+    if _COGNITO_JWKS is None:
+        region = os.getenv("AWS_REGION", "us-east-1")
+        user_pool_id = os.getenv("COGNITO_USER_POOL_ID")
+        if not user_pool_id:
+            return []
+        url = f"https://cognito-idp.{region}://{user_pool_id}/.well-known/jwks.json"
+        try:
+            _COGNITO_JWKS = requests.get(url).json().get("keys", [])
+        except Exception:
+            logging.exception("Failed to pull Cognito JWKS certificates")
+            return []
+    return _COGNITO_JWKS
+
+async def verify_cognito_or_jwt(credentials: HTTPAuthorizationCredentials = Depends(security_agent)):
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Please log in to continue.")
+    token = credentials.credentials
+    try:
+        unverified_header = jwt.get_unverified_header(token)
+        issuer = unverified_header.get("iss", "")
+        
+        if "cognito" in issuer or os.getenv("USE_COGNITO") == "true":
+            # Real production verification against Cloud identity public keys
+            keys = get_cognito_public_keys()
+            kid = unverified_header.get("kid")
+            public_key = next((k for k in keys if k["kid"] == kid), None)
+            
+            if not public_key:
+                raise jwt.PyJWTError("Matching cloud validation certificate key not found")
+                
+            # Construct the verification key parameters
+            region = os.getenv("AWS_REGION", "us-east-1")
+            user_pool_id = os.getenv("COGNITO_USER_POOL_ID")
+            expected_iss = f"https://cognito-idp.{region}://{user_pool_id}"
+            
+            # Decode using public certificate parameters from AWS User Pool
+            decoded_payload = jwt.decode(
+                token, 
+                public_key, 
+                algorithms=["RS256"], 
+                audience=os.getenv("COGNITO_CLIENT_ID"),
+                issuer=expected_iss
+            )
+            return {
+                "identity_provider": "aws_cognito", 
+                "user_id": decoded_payload.get("sub"), 
+                "username": decoded_payload.get("username")
+            }
+        else:
+            decoded_payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+            return {"identity_provider": "native_jwt", "user_id": int(decoded_payload["sub"]), "username": decoded_payload["username"]}
+    except jwt.PyJWTError as token_error:
+        raise HTTPException(status_code=401, detail=f"Invalid token credentials: {str(token_error)}")
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
