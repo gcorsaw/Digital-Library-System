@@ -147,6 +147,7 @@
         * As a side task, I also am planning on going through the code and removing any uncessary lines of code or functions that may no longer be needed as there could be functions that may be serving more than one purpose or no purpose at all.
     * I also drafted antoher UI that would allow the user to create an account and login to the account if the user already created an account in the database. If either of the 'buttons' were clicked, then the associated page will be pulled up for that particular process. If the user already has an account, then they will be able to either add more books to their 'library', search their books, remove books that may be in the database, or edit the books.
     * I also had a meeting with my supervisor today as well. We talked about the next steps consisiting of finding a way to populate the database using a text file rather than having the text being in the database itself and losing the data upon deletion of the table. We also talked about getting more User interface ideas drafted this upcoming week to ensure that the app is going to be as user friendly as possible. We also scheduled the next meeting for next Friday (9/18/2026).
+    
 * __Monday (9/14/2026)__
     * The first task that I did was I did some research on how I can store information differently rather than having the data be directly stored into DBeaver (the software that I'm using for my Databases for the project).
         * What I discovered is that if I use a .csv file (the file extension that stands for `common-separated values`).
