@@ -15,7 +15,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from contextlib import asynccontextmanager
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
-from argon2 import PasswordHash
+from argon2 import PasswordHasher
+from argon2.exceptions import VerificationError, InvalidHashError
 
 # Initialize dotenv manually if needed or fallback safely
 _COGNITO_JWKS = None
@@ -146,7 +147,7 @@ def get_db_cursor() -> Generator[RealDictCursor, None, None]:
         cursor.close()
         db_manager.release_conn(connection)
 
-password_hasher = PasswordHash.recommended()
+password_hasher = PasswordHasher()
 _DUMMY_HASH = password_hasher.hash("timing-equalizer-not-a-real-password")
 _COGNITO_JWKS = None
 security_agent = HTTPBearer(auto_error=False)
@@ -187,7 +188,7 @@ async def verify_cognito_or_jwt(credentials: HTTPAuthorizationCredentials = Depe
     token = credentials.credentials
     try:
         unverified_header = jwt.get_unverified_header(token)
-        issuer = unverified_header.get("iss", "")
+        issuer = jwt.decode(token, options={"verify_signature": False}).get("iss", "")
         
         if "cognito" in issuer or os.getenv("USE_COGNITO") == "true":
             keys = get_cognito_public_keys()
@@ -307,7 +308,10 @@ def login(body: LoginRequest, cursor: RealDictCursor = Depends(get_db_cursor)):
     )
     user = cursor.fetchone()
     stored_hash = user["password_hash"] if user and user["password_hash"] else _DUMMY_HASH
-    password_ok = password_hasher.verify(body.password, stored_hash)
+    try:
+        password_ok = password_hasher.verify(stored_hash, body.password)
+    except (VerificationError, InvalidHashError):
+        password_ok = False
     if not (user and user["password_hash"] and password_ok):
         raise HTTPException(status_code=401, detail="Invalid username or password.")
     return {
@@ -862,6 +866,8 @@ def add_game(
         if cursor.fetchone() is None:
             raise HTTPException(status_code=409, detail="This game is already in your library.")
         return {"message": "Game added successfully", "game": new_game}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -916,6 +922,8 @@ def update_book_progress_by_title(
         if row is None:
             raise HTTPException(status_code=404, detail="Book not found in your library.")
         return {"status": "success", "updated_record": dict(row)}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Progress sync failed: {str(e)}")
 

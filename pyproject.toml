@@ -15,7 +15,8 @@ dependencies = [
     "pwdlib[argon2]>=0.2.1",
     "uvicorn[standard]>=0.52.4",
     "pyjwt>=2.15.0",
-    "requests"
+    "requests",
+    "argon2-cffi>=25.1.0",
 ]
 
 [dependency-groups]
