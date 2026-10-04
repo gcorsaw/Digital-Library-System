@@ -1,6 +1,6 @@
 # Dockerfile.backend
 # Multi-stage production build structure for Python containers
-FROM ghcr.io/astral-sh/uv:python3.10-alpine AS builder
+FROM ghcr.io/astral-sh/uv:python3.10-bookworm-slim AS builder
 
 WORKDIR /app
 

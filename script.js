@@ -20,10 +20,7 @@ const resultsSection = document.getElementById("results");
 const resultsTitle = document.getElementById("resultsTitle");
 const resultsList = document.getElementById("resultsList");
 
-// FIX: Switched from hardcoded static local endpoints to an adaptive dynamic mapping layer
-const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://localhost:8000'
-    : '';
+const API_BASE_URL = '';
 
 // Original function name preserved exactly from your repository file
 async function fetchCatalog() {
@@ -50,6 +47,33 @@ document.addEventListener("DOMContentLoaded", fetchCatalog);
 // --- Live Authentication Configuration ---
 const signupBtn = document.getElementById("signupBtn");
 const signupLabel = document.getElementById("signupLabel");
+
+function formatAuthError(detail, fallbackMessage) {
+  if (typeof detail === "string") return detail;
+
+  if (Array.isArray(detail)) {
+    const messages = detail.map((issue) => {
+      if (typeof issue === "string") return issue;
+      if (!issue || typeof issue !== "object") return "";
+
+      const location = Array.isArray(issue.loc)
+        ? issue.loc.filter((part) => part !== "body").join(".")
+        : "";
+      const message = typeof issue.msg === "string"
+        ? issue.msg.replace(/^Value error,\s*/, "")
+        : "";
+
+      return location && message ? `${location}: ${message}` : message;
+    }).filter(Boolean);
+
+    if (messages.length) return messages.join("\n");
+  } else if (detail && typeof detail === "object") {
+    if (typeof detail.message === "string") return detail.message;
+    if (typeof detail.msg === "string") return detail.msg;
+  }
+
+  return fallbackMessage;
+}
 
 let currentAuthToken = localStorage.getItem("library_auth_token") || null;
 let currentUsername = localStorage.getItem("library_username") || "guest";
@@ -95,7 +119,7 @@ if (signupBtn) {
       });
       
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Registration failed");
+      if (!res.ok) throw new Error(formatAuthError(data.detail, "Registration failed"));
 
       localStorage.setItem("library_auth_token", data.access_token);
       localStorage.setItem("library_username", data.user.username);
@@ -105,7 +129,7 @@ if (signupBtn) {
       alert(`Welcome to your digital library, ${currentUsername}! Account created successfully.`);
       syncAuthState();
     } catch (err) {
-      alert(`Registration Error: ${err.message}`);
+      alert(`Registration Error: ${err instanceof Error ? err.message : "An unexpected error occurred."}`);
     }
   });
 }
@@ -133,7 +157,7 @@ loginBtn.addEventListener("click", async () => {
       });
       
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Login failed");
+      if (!res.ok) throw new Error(formatAuthError(data.detail, "Login failed"));
 
       localStorage.setItem("library_auth_token", data.access_token);
       localStorage.setItem("library_username", data.user.username);

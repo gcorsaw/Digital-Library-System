@@ -1,5 +1,25 @@
 # MyApp
 
+## Digital Library app
+
+Run the vanilla frontend, API, and database together from the repository root:
+
+```bash
+docker compose up --build -d
+```
+
+Open [http://localhost:8080](http://localhost:8080). The frontend sends API
+requests to the same origin, and Nginx proxies `/auth` and `/books` to the
+backend. The backend API is also available locally at
+[http://localhost:8001](http://localhost:8001); this avoids conflicting with a
+locally running `uv run fastapi dev` server on port 8000.
+
+To apply frontend or Nginx configuration changes, recreate the web service:
+
+```bash
+docker compose up -d --force-recreate web_ui
+```
+
 This project was generated with [Angular CLI](https://github.com/angular/angular-cli) version 17.3.17.
 
 ## Development server
