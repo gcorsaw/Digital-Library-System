@@ -9,21 +9,26 @@ they can never touch your real data. Create it once:
 then run:  pytest -v
 (DB_USER / DB_PASSWORD / DB_HOST / DB_PORT come from your .env as usual;
 set TEST_DB_NAME to use a different test database name.)
+The test role needs CREATE permission on that database; it does not need
+CREATE permission on the public schema.
 
 Every run rebuilds the schema from digital-library-system.sql, and every test
 starts with empty user/book/game tables.
 """
+import hashlib
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
+
+import psycopg2
+from psycopg2 import sql
 
 # Must happen BEFORE importing main, so the app connects to the test database.
 os.environ["DB_NAME"] = os.environ.get("TEST_DB_NAME", "digital_library_test")
 os.environ["JWT_SECRET_KEY"] = "test-only-secret-key-that-is-32-chars-or-more"
 
 from jose import jwt
-import psycopg2
 import pytest
 from fastapi.testclient import TestClient
 
@@ -63,13 +68,42 @@ def db_run(sql, params=None, fetch=False):
 
 @pytest.fixture(scope="session")
 def fresh_schema():
-    # The schema file DROPs tables, so refuse to run against anything that isn't a test DB.
+    # The schema file drops tables, so only rebuild it inside an isolated test schema.
     assert os.environ["DB_NAME"].endswith("_test"), "Test database name must end with _test"
-    conn = db_connect()
-    conn.autocommit = True
-    with conn.cursor() as cur:
-        cur.execute(SCHEMA_FILE.read_text())
-    conn.close()
+    previous_pgoptions = os.environ.get("PGOPTIONS")
+    schema_suffix = hashlib.sha256(
+        f"{os.environ['DB_NAME']}:{get_env('DB_USER')}".encode()
+    ).hexdigest()[:12]
+    test_schema = f"library_test_{schema_suffix}"
+    os.environ["PGOPTIONS"] = " ".join(
+        part for part in (previous_pgoptions, f"-c search_path={test_schema},public") if part
+    )
+
+    try:
+        conn = db_connect()
+        conn.autocommit = True
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(
+                        sql.Identifier(test_schema)
+                    )
+                )
+                cur.execute(
+                    sql.SQL("SET search_path TO {}, public").format(
+                        sql.Identifier(test_schema)
+                    )
+                )
+                cur.execute(SCHEMA_FILE.read_text())
+        finally:
+            conn.close()
+
+        yield
+    finally:
+        if previous_pgoptions is None:
+            os.environ.pop("PGOPTIONS", None)
+        else:
+            os.environ["PGOPTIONS"] = previous_pgoptions
 
 
 @pytest.fixture(scope="session")
