@@ -238,4 +238,6 @@
 
 * __Monday (10-5-2026)__
     * The first task that I did was to review the unit testing file that was created this past weekend to ensure thta I understood what each unit test was performing and I found it interesting that certain aspects of the code that I hadn't used before or taken into consideration. For instance, I found it interesting that the monkeypatch is a fixture that is was used to replace the get_conn and release_conn methods of the db_manager with the mock implementations. This was also interesting because it would allow for controlled testing of the get_db_cursor function's behavior in the presence of exceptions. The next task that I intend on performing is to research testing techniques such as unit testing to name an example of what I intend on researching in the second work block.
-    
+    * The second task that I did was to do research about testing styles such as unit testing. I also performed some more documentation for the python unit testing file that I created this past weekend. What I found interesting is that there were many parts of unit testing that I either hadn't learn about before in my other classes before. I found that it was beneficial to do some researching about the unit testing rather than not doing the research and not knowing further information about the topic.
+
+* __Tuesday (10-6-2026)__
