@@ -13,5 +13,6 @@ password=${DB_PASSWORD}
 port=${DB_PORT:-5440}
 EOF
 
+
 echo "database.ini file populated dynamically. Executing migration tasks..."
 # python ingest_catalog.py
