@@ -240,7 +240,18 @@ def test_get_cognito_public_keys_skips_request_without_pool_id(monkeypatch):
     assert main.get_cognito_public_keys() == []
     request.assert_not_called()
 
-
+"""
+This function is going to test the create_access_token function, which generates a JWT 
+access token containing the user ID and username. The test uses the monkeypatch fixture 
+to set the JWT_SECRET_KEY and JWT_EXPIRE_MINUTES environment variables, which are required for 
+signing the token and setting its expiration time. The test calls the create_access_token function 
+with a user ID and username, and then decodes the generated token using the jwt.decode function
+to verify its contents. The test asserts that the decoded payload contains the correct user ID and username, 
+that the expiration time is in the future, and that the difference between the expiration time and 
+the issued-at time matches the expected expiration duration. The assert statements ensure that 
+the create_access_token function behaves as expected, generating a valid JWT token with the correct
+claims and expiration time, providing a secure means of authenticating users in the application.
+"""
 def test_create_access_token_contains_user_and_expiration(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", TOKEN_SECRET)
     monkeypatch.setenv("JWT_EXPIRE_MINUTES", "15")
@@ -482,7 +493,9 @@ def test_search_title_trims_query_and_scopes_user():
     assert result == {"query": "Hobbit", "books": [{"book_title": "The Hobbit"}]}
     assert cursor.execute.call_args.args[1] == (USER["user_id"], "%Hobbit%")
 
+"""
 
+"""
 def test_search_pages_requires_bounds_and_valid_range():
     cursor = MagicMock()
     with pytest.raises(HTTPException) as missing:
@@ -535,7 +548,16 @@ def test_get_book_details_returns_row_or_404():
         main.get_book_details(9, cursor)
     assert error.value.status_code == 404
 
-
+"""
+This function is going to test the add_game function, this is going to add a new game to the database 
+and track it for the user. The test uses MagicMock to simulate the database connection and cursor,
+allowing for testing without requiring an actual database. The test checks that the correct results 
+are returned from the function and that the execute method is called with the correct parameters, 
+ensuring that the application manages database connections properly and maintains resource integrity. 
+The test also verifies that the function raises an HTTPException with a 409 status 
+code when attempting to add a duplicate tracking entry, ensuring that the application 
+correctly handles conflicts and prevents duplicate entries in the user's game library.
+"""
 def test_add_game_inserts_game_and_tracks_for_user():
     cursor = MagicMock()
     game_row = {"game_id": 4, "game_title": "Catan"}
