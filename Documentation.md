@@ -241,3 +241,11 @@
     * The second task that I did was to do research about testing styles such as unit testing. I also performed some more documentation for the python unit testing file that I created this past weekend. What I found interesting is that there were many parts of unit testing that I either hadn't learn about before in my other classes before. I found that it was beneficial to do some researching about the unit testing rather than not doing the research and not knowing further information about the topic.
 
 * __Tuesday (10-6-2026)__
+    * The first task that I did today was to continue to document my Unit Testing document to ensure that all of my functions have a better description when I go to refer back to my code later on. Even though there were some functions that performed similar unit tests, it was still interesting to see some of the minor differences between each of the different functions. The second task that I intend on performing is to perform research about integration testing, this is going t obe a different style of testing that I'm not accustomed to performing in code or I haven't done a full deep dive of testing styles or processes.
+    *  
+
+* __Wednesday (10-7-2026)__
+
+* __Thursday (10-8-2026)__
+
+* __Friday (10-9-2026)__

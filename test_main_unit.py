@@ -57,7 +57,27 @@ def test_get_env_strips_values_and_defaults_port(monkeypatch):
     assert main.get_env("DB_HOST") == "db.example"
     assert main.get_env("DB_PORT") == "5440"
 
-
+"""
+This function is going to test the get_env function's ability to handle missing required values. 
+The test uses the @pytest.mark.parametrize decorator to run the test with different input values, 
+including None and whitespace strings. The monkeypatch fixture is used to modify the environment variables, 
+simulating scenarios where the required environment variable is either missing or contains only whitespace.
+The test verifies that the get_env function is going to raise a RuntimeError with a message
+containing the name of the environment variable when it's missing or invalid. 
+This ensures that the application correctly enforces the presence of required configuration values,
+preventing potential issues during runtime due to misconfiguration. In the if-else block, 
+the test checks if the value is None, in that case it will delete delete the environment variable
+"DB_NAME" using monkeypatch.delenv, simulating a missing required value. The raising=False argument
+is used to avoid raising an error if the environment variable does not exist. In the else block,
+if the value is a whitespace string, it sets the environment variable "DB_NAME" to that value using
+monkeypatch.setenv, simulating an invalid required value. The test then asserts that calling 
+main.get_env("DB_NAME") raises a RuntimeError with a message containing "DB_NAME", 
+ensuring that the application correctly handles missing or invalid required environment variables.
+In the with block, the test uses pytest.raises to assert that a RuntimeError is 
+raised when calling main.get_env("DB_NAME"). The match argument is used to check 
+that the error message contains "DB_NAME", indicating that the error is related 
+to the missing or invalid required environment variable.
+"""
 @pytest.mark.parametrize("value", [None, "  "])
 def test_get_env_rejects_missing_required_values(monkeypatch, value):
     if value is None:
@@ -164,7 +184,27 @@ def test_get_db_cursor_rolls_back_and_releases_connection(monkeypatch):
     connection.cursor.return_value.close.assert_called_once_with()
     main.db_manager.release_conn.assert_called_once_with(connection)
 
-
+"""
+This is going to test the get_cognito_public_keys_fetches_and_caches function, 
+which retrieves public keys from AWS Cognito for JWT verification. The 
+keys variable is going to be a mock representation of the keys returned by the Cognito endpoint.
+The response variable is going to be a MagicMock object that simulates the HTTP response from the requests.get call,
+returning the keys in JSON format. The request variable is going to be a MagicMock that
+simulates the requests.get function, returning the mocked response. The monkeypatch fixture is used to replace
+the requests.get function with the mocked request, allowing for controlled testing of the get_cognito_public_keys 
+function's behavior without making actual HTTP requests. The monkeypatch is also used to set 
+the _COGNITO_JWKS variable to None, ensuring that the function fetches the keys from the endpoint 
+rather than using cached values. The monkeypatch is also used to set the AWS_REGION and COIGNITO_USER_POOL_ID 
+environment variables, which are required for constructing the Cognito endpoint URL. 
+The test asserts that the get_cognito_public_keys function returns the expected keys 
+and that the requests.get function is called only once, verifying that the keys are cached for subsequent calls. 
+The test also checks that the correct URL is used for the requests.get call, 
+ensuring that the function constructs the endpoint URL correctly based on the environment variables. The assert 
+statements verify that the function behaves as expected, returning the correct keys and caching them for future use.
+The request.assert_called_once_with statment checks that the requests.get function is called 
+exactly once with the expected URL, ensuring that the function constructs the endpoint URL 
+correctly based on the environment variables and that it fetches the keys from the correct Cognito endpoint.q 
+"""
 def test_get_cognito_public_keys_fetches_and_caches(monkeypatch):
     keys = [{"kid": "key-1"}]
     response = MagicMock()
@@ -181,7 +221,16 @@ def test_get_cognito_public_keys_fetches_and_caches(monkeypatch):
         "https://cognito-idp.us-west-2.amazonaws.com/pool-123/.well-known/jwks.json"
     )
 
-
+"""
+This function is going to test the get_cognito_public_keys function's behavior when the COIGNITO_USER_POOL_ID
+environment variable is not set. The test uses the monkeypatch fixture to delete the COIGNITO_USER_POOL_ID
+environment variable, simulating a scenario where the required configuration is missing. The test also sets the
+_COGNITO_JWKS variable to None, ensuring that the function attempts to fetch the keys from the endpoint rather 
+than using cached values. The test asserts that the get_cognito_public_keys function returns an empty list 
+when the COIGNITO_USER_POOL_ID is not set, indicating that the function skips the request to the Cognito endpoint. 
+The test also checks that the requests.get function is not called, verifying that the function correctly handles 
+the missing configuration and avoids making unnecessary HTTP requests. 
+"""
 def test_get_cognito_public_keys_skips_request_without_pool_id(monkeypatch):
     request = MagicMock()
     monkeypatch.setattr(main.requests, "get", request)
