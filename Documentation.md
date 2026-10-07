@@ -246,6 +246,7 @@
 
 * __Wednesday (10-7-2026)__
     * The first task that I did was to finish researching integration testing and I also started researching for the monkey patching. This was interesting because the Monkey Patching was new information that I hadn't learned about in any of my prior classes.
+    * The second task that I did was to finish researching Monkey Patching and I also continued to review the Unit testing python file that I created this past weekend. I thought that Monkey patching was still interesting to read about Monkeypatching and to see how MonkeyPatch actually works in the code and it can help deepen the knowledge on what I have researched the past few days or what the prior task that I have completed earlier in the day. 
 * __Thursday (10-8-2026)__
 
 * __Friday (10-9-2026)__

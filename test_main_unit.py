@@ -7,7 +7,6 @@ successful operations, error handling, and edge cases. The tests cover user regi
 login, book and game management, and the validation of input data, providing a comprehensive
 suite to verify the functionality and robustness of the application.
 """
-
 import asyncio
 import os
 from datetime import datetime, timezone
@@ -264,10 +263,17 @@ def test_create_access_token_contains_user_and_expiration(monkeypatch):
     assert datetime.now(timezone.utc).timestamp() < payload["exp"]
     assert payload["exp"] - payload["iat"] == 15 * 60
 
-
+"""
+This function is going to test the get_jwt_secret function's behavior 
+when the JWT_SECRET_KEY environment variable is set to a value that is too short.
+The monkeypatch fixture is going to be used to set the JWT_SECRET_KEY environment variable
+to a short value, simulating a scenario where the secret key does not meet the minimum length requirement.
+The test asserts that calling the get_jwt_secret function raises a RuntimeError with a message
+containing "at least 32 characters", indicating that the function correctly enforces 
+the minimum length requirement for the secret key.
+"""
 def test_get_jwt_secret_rejects_short_secrets(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", "short")
-
     with pytest.raises(RuntimeError, match="at least 32 characters"):
         main.get_jwt_secret()
 
@@ -449,7 +455,15 @@ def test_get_books_scopes_query_to_current_user():
     assert main.get_books(USER, cursor) == {"books": [{"book_id": 3}]}
     assert cursor.execute.call_args.args[1] == (USER["user_id"],)
 
-
+"""
+This is going to test the get_books function's behavior when a database error occurs. 
+The test uses MagicMock to simulate the database cursor, allowing for testing without requiring an actual database.
+The cursor.execute method is set to raise a RuntimeError with the message "database unavailable" when called, 
+simulating a scenario where the database is not accessible. The test asserts that calling the get_books function 
+raises an HTTPException with a 500 status code and that the error message contains "database unavailable", 
+indicating that the function correctly translates database errors into appropriate HTTP responses for the client. 
+This ensures that the application handles unexpected database issues gracefully and provides meaningful feedback to users.
+"""
 def test_get_books_translates_database_errors():
     cursor = MagicMock()
     cursor.execute.side_effect = RuntimeError("database unavailable")
@@ -460,7 +474,15 @@ def test_get_books_translates_database_errors():
     assert error.value.status_code == 500
     assert "database unavailable" in error.value.detail
 
-
+"""
+This function is going to test the user_add_book function, which is going to add a new book to the database and create a library entry for the user. 
+The test uses MagicMock to simulate the database cursor, allowing for testing without requiring an actual database.
+The test checks that the function returns the expected result when a new book is added successfully, and 
+that the cursor.execute method is called the expected number of times, ensuring that the application manages database
+interactions properly and maintains resource integrity. The test simulates the scenario where the book does not already exist in the database, 
+allowing for the successful addition of the book and the creation of a library entry for the user. 
+The test asserts that the result contains a success message and the details of the added book, verifying that the application behaves as expected in this scenario.
+"""
 def test_user_add_book_creates_book_and_library_entry():
     cursor = MagicMock()
     book_row = {"book_id": 11, "book_title": "Example"}
@@ -473,7 +495,16 @@ def test_user_add_book_creates_book_and_library_entry():
     assert cursor.execute.call_count == 3
     assert cursor.execute.call_args_list[-1].args[1] == (USER["user_id"], 11)
 
-
+"""
+This function is going to test the user_add_book function, which is going to add 
+a new book to the database and create a library entry for the user. The test uses MagicMock to simulate the database cursor, 
+allowing for testing without requiring an actual database. The test checks that the function raises an HTTPException with a 409 
+status code when attempting to add a duplicate library entry, ensuring that the application correctly handles 
+conflicts and prevents duplicate entries in the user's library. The test also verifies that the cursor.execute method is called the expected number of times, 
+ensuring that the application manages database interactions properly and maintains resource integrity. The test simulates the scenario where the book already 
+exists in the database and the user has already added it to their library, triggering the conflict error. The test asserts that the correct error is raised 
+and that the application behaves as expected in this edge case, providing appropriate feedback to the client and maintaining data integrity. 
+"""
 def test_user_add_book_rejects_duplicate_library_entry():
     cursor = MagicMock()
     cursor.fetchone.side_effect = [{"book_id": 11, "book_title": "Example"}, None]
@@ -483,7 +514,15 @@ def test_user_add_book_rejects_duplicate_library_entry():
 
     assert error.value.status_code == 409
 
-
+"""
+This is going to test the search_title_by_word function, which searches for books by title based on a query string.
+The test uses MagicMock to simulate the database cursor, allowing for testing without requiring an actual database.
+The test checks that the function trims whitespace from the query string and scopes the search to the current
+user, ensuring that the search results are relevant and accurate. The test verifies that the correct results are returned
+from the function and that the execute method is called with the correct parameters, ensuring that the application
+manages database connections properly and maintains resource integrity. The test also checks that the query string
+is correctly formatted with wildcard characters for partial matching, allowing for flexible search capabilities. 
+"""
 def test_search_title_trims_query_and_scopes_user():
     cursor = MagicMock()
     cursor.fetchall.return_value = [{"book_title": "The Hobbit"}]
@@ -494,7 +533,12 @@ def test_search_title_trims_query_and_scopes_user():
     assert cursor.execute.call_args.args[1] == (USER["user_id"], "%Hobbit%")
 
 """
-
+This function is going to test the search_books_by_pages function, which searches for books within a specific 
+page range. The test uses MagicMock to simulate the database cursor, allowing for testing without requiring an 
+actual dataabase. The test is going to then check that the function raises an HTTPException with a 400 status
+code when the minimum and maximum page bounds are not provided or when the minimum bound is greater than the 
+maximum bound. The test also verifies that the cursor.execute method is not called in these cases,
+ensuring that the application correctly handles invalid input and prevents unnecessary database queries.
 """
 def test_search_pages_requires_bounds_and_valid_range():
     cursor = MagicMock()
