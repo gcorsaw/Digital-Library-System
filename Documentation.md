@@ -245,7 +245,7 @@
     * The second task that I performed was to research integration testing and I also added some more documentation to my unit testing file for some of the functions. I still need to polish the documentation for the functions that still don't have any comments or documentation to those functions. Similar to the first task, I found it interesting that some of the testing processes have special uses under certain circumstances.
 
 * __Wednesday (10-7-2026)__
-
+    * The first task that I did was to finish researching integration testing and I also started researching for the monkey patching. This was interesting because the Monkey Patching was new information that I hadn't learned about in any of my prior classes.
 * __Thursday (10-8-2026)__
 
 * __Friday (10-9-2026)__
