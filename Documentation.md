@@ -247,6 +247,9 @@
 * __Wednesday (10-7-2026)__
     * The first task that I did was to finish researching integration testing and I also started researching for the monkey patching. This was interesting because the Monkey Patching was new information that I hadn't learned about in any of my prior classes.
     * The second task that I did was to finish researching Monkey Patching and I also continued to review the Unit testing python file that I created this past weekend. I thought that Monkey patching was still interesting to read about Monkeypatching and to see how MonkeyPatch actually works in the code and it can help deepen the knowledge on what I have researched the past few days or what the prior task that I have completed earlier in the day. 
+
 * __Thursday (10-8-2026)__
+    * The first task that I did was to research Mock testing with pytest. This was interesting because the Mock testing can be used as a form of testing that is can replace real objects or functions with fake objects or functions that we can control. This was even more interesting because I learned that this technique is essential when my code depends on external APIs and Web services, databases and file systems, time-sensitive operations, third-party libraries, and complext objects that are hard to instantiate. This would make sense because for the project, because I'm using databases and external APIs throughout the project. 
+    * The second task that I worked on adding some more notes about securing FastAPI with AWS Cognito. This was interesting having a production-ready authentication that has FastAPI and AWS Cognito add security, scalabiltiy, and maintainability. This can be useful because it can make the app more scalable and more maintainablity for the project. 
 
 * __Friday (10-9-2026)__
