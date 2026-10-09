@@ -57,9 +57,15 @@ Open the app:
 - API documentation: <http://localhost:8001/docs>
 
 The browser sends API requests to the same origin as the web app. Nginx
-forwards `/auth` and `/books` requests to the backend. The backend's local port
-is `8001` so it does not conflict with a separate development server on port
-`8000`.
+forwards `/auth`, `/books`, and `/games` requests to the backend. The backend's
+local port is `8001` so it does not conflict with a separate development server
+on port `8000`.
+
+Each registered account gets a private PostgreSQL schema in the shared
+database. A schema is created empty during registration or on the first
+authenticated request for an existing account; the existing shared catalog is
+not copied or deleted. The backend database role must have permission to create
+schemas.
 
 ## Everyday commands
 
@@ -138,7 +144,7 @@ uv run pytest -q test_main_unit.py
 The database-backed tests in `test_main.py` require a separate PostgreSQL test
 database whose name ends in `_test`. They rebuild test tables, so do not point
 `TEST_DB_NAME` at your normal application database. The test role also needs
-permission to create a schema in that test database.
+permission to create schemas in that test database.
 
 ## Troubleshooting
 

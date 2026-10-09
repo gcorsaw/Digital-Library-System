@@ -41,9 +41,9 @@ body {
   background: radial-gradient(circle at 50% 0%, var(--bg-top), var(--bg-bottom) 85%);
   min-height: 100vh;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 32px 16px;
+  padding: clamp(12px, 3vw, 32px);
 }
 
 /* ============================================================
@@ -51,11 +51,11 @@ body {
    ============================================================ */
 .app-frame {
   width: 100%;
-  max-width: 420px;
+  max-width: 1120px;
   background: linear-gradient(180deg, #eef4fc 0%, #cfe1f5 100%);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
-  padding: 20px 20px 32px;
+  padding: clamp(16px, 2.5vw, 32px);
   position: relative;
   overflow: hidden;
 }
@@ -223,9 +223,9 @@ body {
    Action tiles
    ============================================================ */
 .tiles {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(10px, 1.5vw, 16px);
 }
 
 .tile {
@@ -245,6 +245,7 @@ body {
   backface-visibility: hidden;
   transform: translate3d(0, 0, 0);
   transition: opacity 0.15s ease, background-color 0.15s ease;
+  min-width: 0;
 }
 
 .tile:hover {
@@ -434,6 +435,10 @@ body {
   gap: 12px;
 }
 
+.modal__form[hidden] {
+  display: none;
+}
+
 .modal__form label {
   display: flex;
   flex-direction: column;
@@ -486,11 +491,40 @@ body {
     padding: 16px 14px 24px;
   }
 
-  .login-btn span {
+  #loginBtn span {
     display: none;
   }
 
-  .login-btn {
+  #loginBtn {
     padding: 10px;
+  }
+
+  #signupBtn {
+    padding: 10px 12px;
+  }
+}
+
+@media (min-width: 640px) {
+  .tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .welcome {
+    font-size: clamp(1.15rem, 2vw, 1.5rem);
+  }
+}
+
+@media (min-width: 960px) {
+  .tiles {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .tile {
+    min-height: 112px;
+    justify-content: center;
+  }
+
+  .content {
+    margin-top: 36px;
   }
 }

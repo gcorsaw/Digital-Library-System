@@ -2,15 +2,14 @@
 Tests for the Digital Library API.
 
 These run against a SEPARATE database (default name: digital_library_test) so
-they can never touch your real data. Create it once:
-
-    createdb digital_library_test        # or: CREATE DATABASE digital_library_test;
-
-then run:  pytest -v
+they can never touch your real data. The test fixture creates this database
+when it is missing, then rebuilds its isolated test schema on each run.
 (DB_USER / DB_PASSWORD / DB_HOST / DB_PORT come from your .env as usual;
 set TEST_DB_NAME to use a different test database name.)
-The test role needs CREATE permission on that database; it does not need
-CREATE permission on the public schema.
+The test role needs permission to create the test database and schema; it does
+not need CREATE permission on the public schema.
+
+Run with:  uv run pytest -v
 
 Every run rebuilds the schema from digital-library-system.sql, and every test
 starts with empty user/book/game tables.
@@ -65,14 +64,79 @@ def db_run(sql, params=None, fetch=False):
     finally:
         conn.close()
 
+def user_schema(headers):
+    token = headers["Authorization"].split(" ", 1)[1]
+    user_id = int(jwt.get_unverified_claims(token)["sub"])
+    return f"library_user_{user_id}"
+
+def db_run_for_user(headers, statement, params=None, fetch=False):
+    conn = db_connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                sql.SQL("SET LOCAL search_path TO {}, pg_catalog").format(
+                    sql.Identifier(user_schema(headers))
+                )
+            )
+            cur.execute(statement, params)
+            rows = cur.fetchall() if fetch else None
+        conn.commit()
+        return rows
+    finally:
+        conn.close()
+
 
 @pytest.fixture(scope="session")
 def fresh_schema():
     # The schema file drops tables, so only rebuild it inside an isolated test schema.
-    assert os.environ["DB_NAME"].endswith("_test"), "Test database name must end with _test"
+    test_db_name = os.environ["DB_NAME"]
+    assert test_db_name.endswith("_test"), "Test database name must end with _test"
+
+    # The database itself may not exist on a fresh checkout. Connect to PostgreSQL's
+    # maintenance database and create only the guarded, explicitly named test database.
+    admin_conn = psycopg2.connect(
+        dbname="postgres",
+        user=get_env("DB_USER"),
+        password=get_env("DB_PASSWORD"),
+        host=get_env("DB_HOST"),
+        port=int(get_env("DB_PORT")),
+    )
+    admin_conn.autocommit = True
+    try:
+        with admin_conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (test_db_name,))
+            if cur.fetchone() is None:
+                cur.execute(
+                    sql.SQL("CREATE DATABASE {}").format(sql.Identifier(test_db_name))
+                )
+    finally:
+        admin_conn.close()
+
+    cleanup_conn = psycopg2.connect(
+        dbname=test_db_name,
+        user=get_env("DB_USER"),
+        password=get_env("DB_PASSWORD"),
+        host=get_env("DB_HOST"),
+        port=int(get_env("DB_PORT")),
+    )
+    cleanup_conn.autocommit = True
+    try:
+        with cleanup_conn.cursor() as cur:
+            cur.execute(
+                "SELECT nspname FROM pg_namespace WHERE nspname LIKE 'library_user_%';"
+            )
+            for (schema_name,) in cur.fetchall():
+                cur.execute(
+                    sql.SQL("DROP SCHEMA {} CASCADE").format(
+                        sql.Identifier(schema_name)
+                    )
+                )
+    finally:
+        cleanup_conn.close()
+
     previous_pgoptions = os.environ.get("PGOPTIONS")
     schema_suffix = hashlib.sha256(
-        f"{os.environ['DB_NAME']}:{get_env('DB_USER')}".encode()
+        f"{test_db_name}:{get_env('DB_USER')}".encode()
     ).hexdigest()[:12]
     test_schema = f"library_test_{schema_suffix}"
     os.environ["PGOPTIONS"] = " ".join(
@@ -114,7 +178,23 @@ def client(fresh_schema):
 
 @pytest.fixture(autouse=True)
 def empty_tables(fresh_schema):
-    # Keeps lookup data (author roles, media types); clears everything else. CASCADE clears tracking tables.
+    conn = db_connect()
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT nspname FROM pg_namespace WHERE nspname LIKE 'library_user_%';"
+            )
+            for (schema_name,) in cur.fetchall():
+                cur.execute(
+                    sql.SQL("DROP SCHEMA {} CASCADE").format(
+                        sql.Identifier(schema_name)
+                    )
+                )
+    finally:
+        conn.close()
+
+    # Rebuild each user's empty schema for every test.
     db_run("TRUNCATE reader_info, book_info, game_info, author_info RESTART IDENTITY CASCADE;")
 
 
@@ -194,6 +274,14 @@ def test_login_failures_do_not_reveal_which_part_was_wrong(client):
     ("get", "/books", None),
     ("get", "/games", None),
     ("get", "/books/search?title=a", None),
+    ("get", "/books/summaries", None),
+    ("get", "/books/info", None),
+    ("get", "/books/search/media_type?media_type=ebook", None),
+    ("get", "/books/search/book_genre?genre=fiction", None),
+    ("get", "/books/search/author?author=reader", None),
+    ("get", "/books/search/pages?min_pages=1", None),
+    ("get", "/comics/search?comic=batman", None),
+    ("get", "/books/1", None),
     ("post", "/books", {"book_title": "X", "book_isbn": "1"}),
     ("post", "/games", {"game_title": "X"}),
     ("put", "/books/1/description", {"book_description": "x"}),
@@ -236,15 +324,32 @@ def test_add_list_and_duplicate_book(client):
     assert again.status_code == 409
 
 
+def test_books_and_games_are_listed_alphabetically_case_insensitively(client):
+    headers = make_user(client)
+    for title, isbn in (("zebra", "9780000000101"), ("Apple", "9780000000102"), ("banana", "9780000000103")):
+        add_book(client, headers, title, isbn)
+    for title in ("Zelda", "asteroids", "Mario"):
+        response = client.post("/games", json={"game_title": title}, headers=headers)
+        assert response.status_code == 201, response.text
+
+    books = client.get("/books", headers=headers).json()["books"]
+    games = client.get("/games", headers=headers).json()["games"]
+    assert [book["book_title"] for book in books] == ["Apple", "banana", "zebra"]
+    assert [game["game_title"] for game in games] == ["asteroids", "Mario", "Zelda"]
+
+
 def test_libraries_are_private_between_users(client):
     alice, bob = make_user(client, "alice"), make_user(client, "bob")
     alice_book = add_book(client, alice, "Alice's Book", "9780000000021")
     assert client.get("/books", headers=bob).json()["books"] == []
     assert client.get("/books/search?title=Alice", headers=bob).json()["books"] == []
 
-    # Same ISBN added by both shares one catalog row but two separate library entries.
+    # Each user gets an independent catalog, even when they add the same ISBN.
     assert client.post("/books", json={"book_title": "Alice's Book", "book_isbn": "9780000000021"}, headers=bob).status_code == 201
-    assert db_run("SELECT count(*) FROM book_info;", fetch=True)[0][0] == 1
+    assert [book["book_title"] for book in client.get("/books", headers=alice).json()["books"]] == ["Alice's Book"]
+    assert [book["book_title"] for book in client.get("/books", headers=bob).json()["books"]] == ["Alice's Book"]
+    assert db_run_for_user(alice, "SELECT count(*) FROM book_info;", fetch=True)[0][0] == 1
+    assert db_run_for_user(bob, "SELECT count(*) FROM book_info;", fetch=True)[0][0] == 1
     assert client.delete(f"/books/{alice_book}", headers=alice).status_code == 200
     assert client.get("/books", headers=alice).json()["books"] == []
     assert len(client.get("/books", headers=bob).json()["books"]) == 1
@@ -268,6 +373,49 @@ def test_description_edit_and_clear(client):
     assert cleared.status_code == 200 and cleared.json()["book_description"] is None
     too_long = client.put(f"/books/{book_id}/description", json={"book_description": "x" * 301}, headers=headers)
     assert too_long.status_code == 422
+
+
+def test_book_progress_updates_schema_columns_and_maps_status(client):
+    headers = make_user(client)
+    add_book(client, headers, "Progress Book")
+
+    finished = client.put(
+        "/books/progress?book_title=Progress%20Book",
+        json={"read_status": "read", "rating": 5},
+        headers=headers,
+    )
+    assert finished.status_code == 200, finished.text
+    assert finished.json()["updated_record"]["read_status"] == "read"
+    assert finished.json()["updated_record"]["rating"] == 5
+    assert db_run_for_user(headers,
+        """
+        SELECT t.read_status, t.book_ratings
+        FROM book_tracking AS t
+        JOIN book_info AS b ON b.book_id = t.book_id
+        WHERE b.book_title = %s;
+        """,
+        ("Progress Book",),
+        fetch=True,
+    ) == [("finished", 5)]
+
+    want_to_read = client.put(
+        "/books/progress?book_title=Progress%20Book",
+        json={"read_status": "want to read"},
+        headers=headers,
+    )
+    assert want_to_read.status_code == 200, want_to_read.text
+    assert want_to_read.json()["updated_record"]["read_status"] == "want to read"
+    assert want_to_read.json()["updated_record"]["rating"] is None
+    assert db_run_for_user(headers,
+        """
+        SELECT t.read_status, t.book_ratings
+        FROM book_tracking AS t
+        JOIN book_info AS b ON b.book_id = t.book_id
+        WHERE b.book_title = %s;
+        """,
+        ("Progress Book",),
+        fetch=True,
+    ) == [("want", None)]
 
 
 def test_missing_book_returns_404(client):
@@ -294,24 +442,58 @@ def test_games_add_list_duplicate_and_privacy(client):
     assert [g["game_title"] for g in client.get("/games", headers=alice).json()["games"]] == ["Catan"]
     assert client.get("/games", headers=bob).json()["games"] == []
     assert client.post("/games", json=payload, headers=bob).status_code == 201
-    assert db_run("SELECT count(*) FROM game_info;", fetch=True)[0][0] == 1
+    assert db_run_for_user(alice, "SELECT count(*) FROM game_info;", fetch=True)[0][0] == 1
+    assert db_run_for_user(bob, "SELECT count(*) FROM game_info;", fetch=True)[0][0] == 1
+
+
+def test_remove_game_only_removes_it_from_requesting_users_library(client):
+    alice, bob = make_user(client, "alice"), make_user(client, "bob")
+    payload = {"game_title": "Catan", "min_players": 3, "max_players": 4}
+    assert client.post("/games", json=payload, headers=alice).status_code == 201
+    assert client.post("/games", json=payload, headers=bob).status_code == 201
+
+    removed = client.delete("/games?game_title=Catan", headers=alice)
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["game"]["game_title"] == "Catan"
+    assert client.get("/games", headers=alice).json()["games"] == []
+    assert [game["game_title"] for game in client.get("/games", headers=bob).json()["games"]] == ["Catan"]
+    assert db_run_for_user(bob,
+        "SELECT count(*) FROM game_info WHERE game_title = %s;",
+        ("Catan",),
+        fetch=True,
+    )[0][0] == 1
+
+    missing = client.delete("/games?game_title=Catan", headers=alice)
+    assert missing.status_code == 404
 
 
 def test_book_with_author_is_found_by_author_search(client):
     headers = make_user(client)
-    author_id = db_run("INSERT INTO author_info (first_name, last_name) VALUES ('George','Orwell') RETURNING author_id;", fetch=True)[0][0]
-    role_id = db_run("SELECT creator_role_id FROM creator_role_type WHERE creator_role_name = 'Author';", fetch=True)[0][0]
+    author_id = db_run_for_user(
+        headers,
+        "INSERT INTO author_info (first_name, last_name) VALUES ('George','Orwell') RETURNING author_id;",
+        fetch=True,
+    )[0][0]
+    db_run_for_user(
+        headers,
+        "INSERT INTO creator_role_type (creator_role_name) VALUES ('Author');",
+    )
+    role_id = db_run_for_user(
+        headers,
+        "SELECT creator_role_id FROM creator_role_type WHERE creator_role_name = 'Author';",
+        fetch=True,
+    )[0][0]
     resp = client.post(
         "/books",
         json={"book_title": "1984", "book_isbn": "9780451524935", "author_id": author_id, "creator_role_id": role_id},
         headers=headers,
     )
     assert resp.status_code == 201
-    found = client.get("/books/search/author?author=orwell").json()["books"]
+    found = client.get("/books/search/author?author=orwell", headers=headers).json()["books"]
     assert [b["book_title"] for b in found] == ["1984"]
 
 
-# ------------------------------------------- shared-catalog endpoints (public)
+# --------------------------------------------- personal-catalog endpoints
 @pytest.mark.parametrize("path", [
     "/books/search/media_type?media_type=ebook",
     "/books/search/book_genre?genre=fiction",
@@ -322,15 +504,16 @@ def test_book_with_author_is_found_by_author_search(client):
     "/books/info",
 ])
 def test_catalog_endpoints_work_on_empty_database(client, path):
-    assert client.get(path).status_code == 200
+    headers = make_user(client)
+    assert client.get(path, headers=headers).status_code == 200
 
 
 def test_book_details_and_bad_ids(client):
     headers = make_user(client)
     book_id = add_book(client, headers)
-    assert client.get(f"/books/{book_id}").json()["book_id"] == book_id
-    assert client.get("/books/999999").status_code == 404
-    assert client.get("/books/abc").status_code == 422
+    assert client.get(f"/books/{book_id}", headers=headers).json()["book_id"] == book_id
+    assert client.get("/books/999999", headers=headers).status_code == 404
+    assert client.get("/books/abc", headers=headers).status_code == 422
     assert client.get("/not-found").status_code == 404
 
 

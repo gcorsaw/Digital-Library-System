@@ -17,6 +17,7 @@ WORKDIR /app
 # Copy runtime binaries and virtual environment configurations from builder stage
 COPY --from=builder /app/.venv /app/.venv
 COPY main.py .
+COPY user-schema.sql .
 
 ENV PATH="/app/.venv/bin:$PATH"
 

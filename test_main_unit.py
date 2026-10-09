@@ -305,6 +305,7 @@ def test_get_current_user_returns_database_user(monkeypatch):
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
     cursor = MagicMock()
     cursor.fetchone.return_value = USER
+    monkeypatch.setattr(main, "activate_user_schema", MagicMock())
 
     result = main.get_current_user(credentials, cursor)
 
@@ -342,6 +343,7 @@ def test_register_hashes_password_and_returns_token(monkeypatch):
     hasher.hash.return_value = "hashed"
     monkeypatch.setattr(main, "password_hasher", hasher)
     monkeypatch.setattr(main, "create_access_token", MagicMock(return_value="signed-token"))
+    monkeypatch.setattr(main, "activate_user_schema", MagicMock())
     body = main.RegisterRequest(username=" reader ", email=" reader@example.com ", password="password123")
 
     result = main.register(body, cursor)

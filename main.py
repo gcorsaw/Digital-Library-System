@@ -8,11 +8,13 @@ import psycopg2
 import requests
 from datetime import datetime, timedelta, timezone, date
 from typing import List, Optional, Generator
+from pathlib import Path
 from fastapi import FastAPI, Depends, HTTPException, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, field_validator, model_validator
 from contextlib import asynccontextmanager
+from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
 from argon2 import PasswordHasher
@@ -101,6 +103,7 @@ class DatabaseManager:
             self._pool = None
 
 db_manager = DatabaseManager()
+USER_SCHEMA_FILE = Path(__file__).with_name("user-schema.sql")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -146,6 +149,35 @@ def get_db_cursor() -> Generator[RealDictCursor, None, None]:
     finally:
         cursor.close()
         db_manager.release_conn(connection)
+
+def activate_user_schema(cursor: RealDictCursor, user_id: int) -> None:
+    schema_name = f"library_user_{int(user_id)}"
+    cursor.execute("SELECT pg_advisory_xact_lock(%s);", (int(user_id),))
+    cursor.execute(
+        sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema_name))
+    )
+    cursor.execute(
+        sql.SQL("SET LOCAL search_path TO {}, pg_catalog").format(
+            sql.Identifier(schema_name)
+        )
+    )
+    cursor.execute("SELECT to_regclass('book_info') AS book_info;")
+    if cursor.fetchone()["book_info"] is None:
+        cursor.execute(
+            """
+            SELECT namespace.nspname
+            FROM pg_catalog.pg_extension AS extension
+            JOIN pg_catalog.pg_namespace AS namespace
+              ON namespace.oid = extension.extnamespace
+            WHERE extension.extname = 'citext';
+            """
+        )
+        extension_schema = cursor.fetchone()
+        if extension_schema is None:
+            raise RuntimeError("The PostgreSQL citext extension must be installed.")
+        citext_type = f"{sql.Identifier(extension_schema['nspname']).as_string(cursor)}.citext"
+        schema_ddl = USER_SCHEMA_FILE.read_text().replace("public.citext", citext_type)
+        cursor.execute(schema_ddl)
 
 password_hasher = PasswordHasher()
 _DUMMY_HASH = password_hasher.hash("timing-equalizer-not-a-real-password")
@@ -273,6 +305,7 @@ def get_current_user(
     user = cursor.fetchone()
     if user is None:
         raise unauthorized
+    activate_user_schema(cursor, user_id)
     return dict(user)
 
 @library_app.post("/auth/register", status_code=status.HTTP_201_CREATED)
@@ -289,6 +322,7 @@ def register(body: RegisterRequest, cursor: RealDictCursor = Depends(get_db_curs
     except psycopg2.errors.UniqueViolation:
         raise HTTPException(status_code=409, detail="That username or email is already registered.")
     user = cursor.fetchone()
+    activate_user_schema(cursor, user["user_id"])
     return {
         "access_token": create_access_token(user["user_id"], user["username"]),
         "token_type": "bearer",
@@ -387,7 +421,7 @@ def read_root():
 
 @library_app.get("/books")
 def get_books(
-    user: dict = Depends(verify_cognito_or_jwt),
+    user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
     try:
@@ -397,7 +431,7 @@ def get_books(
             FROM book_tracking AS t
             JOIN book_info AS b ON b.book_id = t.book_id
             WHERE t.user_id = %s
-            ORDER BY b.book_title;
+            ORDER BY LOWER(b.book_title), b.book_title;
             """,
             (user["user_id"],),
         )
@@ -406,7 +440,10 @@ def get_books(
         raise HTTPException(status_code=500, detail=str(e))
 
 @library_app.get("/books/summaries")
-def get_book_summaries_from_database(cursor: RealDictCursor = Depends(get_db_cursor)):
+def get_book_summaries_from_database(
+    user: dict = Depends(get_current_user),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
     try:
         cursor.execute("SELECT book_id, book_title FROM book_info;")
         details_query = cursor.fetchall()
@@ -415,7 +452,10 @@ def get_book_summaries_from_database(cursor: RealDictCursor = Depends(get_db_cur
         raise HTTPException(status_code=500, detail="Could not find book details")
 
 @library_app.get("/books/info")
-def get_details_from_database(cursor: RealDictCursor = Depends(get_db_cursor)):
+def get_details_from_database(
+    user: dict = Depends(get_current_user),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
     try:
         cursor.execute("SELECT * FROM book_info;")
         info_query = cursor.fetchall()
@@ -642,7 +682,11 @@ def description_change(
         raise HTTPException(status_code=500, detail=f"Could not update description: {str(e)}")
 
 @library_app.get("/books/search/media_type")
-def search_books_by_media_type(media_type: str = Query(...), cursor: RealDictCursor = Depends(get_db_cursor)):
+def search_books_by_media_type(
+    media_type: str = Query(...),
+    user: dict = Depends(get_current_user),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
     if not media_type or not media_type.strip():
         raise HTTPException(status_code=400, detail="Media type is required")
     media_type = media_type.strip()
@@ -661,7 +705,11 @@ def search_books_by_media_type(media_type: str = Query(...), cursor: RealDictCur
         raise HTTPException(status_code=500, detail=f"Search by media type failed: {str(e)}")
 
 @library_app.get("/books/search/book_genre")
-def search_books_by_book_genre(genre: str = Query(...), cursor: RealDictCursor = Depends(get_db_cursor)):
+def search_books_by_book_genre(
+    genre: str = Query(...),
+    user: dict = Depends(get_current_user),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
     if not genre or not genre.strip():
         raise HTTPException(status_code=400, detail="Book genre is required")
     book_genre = genre.strip()
@@ -680,7 +728,11 @@ def search_books_by_book_genre(genre: str = Query(...), cursor: RealDictCursor =
         raise HTTPException(status_code=500, detail=f"Search by book genre failed: {str(e)}")
 
 @library_app.get("/books/search/author")
-def search_books_by_author(author: str = Query(...), cursor: RealDictCursor = Depends(get_db_cursor)):
+def search_books_by_author(
+    author: str = Query(...),
+    user: dict = Depends(get_current_user),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
     if not author or not author.strip():
         raise HTTPException(status_code=400, detail="Author name is required")
     author_name = author.strip()
@@ -701,7 +753,11 @@ def search_books_by_author(author: str = Query(...), cursor: RealDictCursor = De
         raise HTTPException(status_code=500, detail=f"Search by author failed: {str(e)}")
 
 @library_app.get("/comics/search")
-def get_comic_book_from_database(comic: str = Query(...), cursor: RealDictCursor = Depends(get_db_cursor)):
+def get_comic_book_from_database(
+    comic: str = Query(...),
+    user: dict = Depends(get_current_user),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
     if not comic or not comic.strip():
         raise HTTPException(status_code=400, detail="Comic book title is required")
     comic_book = comic.strip()
@@ -725,7 +781,8 @@ def get_comic_book_from_database(comic: str = Query(...), cursor: RealDictCursor
 def search_books_by_pages(
     min_pages: int | None = Query(default=None, ge=0),
     max_pages: int | None = Query(default=None, ge=0),
-    cursor: RealDictCursor = Depends(get_db_cursor)
+    cursor: RealDictCursor = Depends(get_db_cursor),
+    user: dict = Depends(get_current_user),
 ):
     if min_pages is None and max_pages is None:
         raise HTTPException(status_code=400, detail="Provide min_pages, max_pages, or both")
@@ -746,7 +803,11 @@ def search_books_by_pages(
         raise HTTPException(status_code=500, detail=f"Search by page count failed: {str(e)}")
 
 @library_app.get("/books/{book_id}")
-def get_book_details(book_id: int, cursor: RealDictCursor = Depends(get_db_cursor)):
+def get_book_details(
+    book_id: int,
+    cursor: RealDictCursor = Depends(get_db_cursor),
+    user: dict = Depends(get_current_user),
+):
     try:
         cursor.execute(
             """
@@ -831,7 +892,7 @@ class Game(BaseModel):
 @library_app.post("/games", status_code=status.HTTP_201_CREATED)
 def add_game(
     game: Game,
-    user: dict = Depends(verify_cognito_or_jwt),
+    user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
     try:
@@ -872,7 +933,10 @@ def add_game(
         raise HTTPException(status_code=500, detail=str(e))
 
 @library_app.get("/games")
-def get_all_games(user: dict = Depends(verify_cognito_or_jwt), cursor: RealDictCursor = Depends(get_db_cursor)):
+def get_all_games(
+    user: dict = Depends(get_current_user),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
     try:
         cursor.execute(
             """
@@ -880,13 +944,43 @@ def get_all_games(user: dict = Depends(verify_cognito_or_jwt), cursor: RealDictC
             FROM game_tracking AS t
             JOIN game_info AS g ON g.game_id = t.game_id
             WHERE t.user_id = %s
-            ORDER BY g.game_title;
+            ORDER BY LOWER(g.game_title), g.game_title;
             """,
             (user["user_id"],),
         )
         return {"games": cursor.fetchall()}
     except Exception as error:
         raise HTTPException(status_code=500, detail="Could not retrieve games")
+
+@library_app.delete("/games")
+def delete_game_endpoint(
+    game_title: str,
+    user: dict = Depends(get_current_user),
+    cursor: RealDictCursor = Depends(get_db_cursor),
+):
+    try:
+        cursor.execute(
+            """
+            WITH targeted_game AS (
+                SELECT game_id FROM game_info WHERE LOWER(game_title) = LOWER(%s) LIMIT 1
+            ),
+            removed AS (
+                DELETE FROM game_tracking
+                WHERE user_id = %s AND game_id = (SELECT game_id FROM targeted_game)
+                RETURNING game_id
+            )
+            SELECT g.* FROM removed AS r JOIN game_info AS g ON g.game_id = r.game_id;
+            """,
+            (game_title.strip(), user["user_id"]),
+        )
+        removed = cursor.fetchone()
+        if removed is None:
+            raise HTTPException(status_code=404, detail="Game not found in your library.")
+        return {"message": "Game removed from your library", "game": removed}
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"Could not remove game: {str(error)}")
 
 class BookProgressUpdate(BaseModel):
     read_status: str = Field(..., description="'read' or 'want to read'")
@@ -904,17 +998,24 @@ class BookProgressUpdate(BaseModel):
 def update_book_progress_by_title(
     book_title: str,
     payload: BookProgressUpdate,
-    user: dict = Depends(verify_cognito_or_jwt),
+    user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
     try:
         cursor.execute(
             """
             UPDATE book_tracking AS t
-            SET read_status = %s, rating = %s
+            SET read_status = CASE WHEN %s = 'read' THEN 'finished' ELSE 'want' END,
+                book_ratings = %s
             FROM book_info AS b
             WHERE b.book_id = t.book_id AND t.user_id = %s AND LOWER(b.book_title) = LOWER(%s)
-            RETURNING b.book_id, b.book_title, t.read_status, t.rating;
+            RETURNING b.book_id, b.book_title,
+                CASE t.read_status
+                    WHEN 'finished' THEN 'read'
+                    WHEN 'want' THEN 'want to read'
+                    ELSE t.read_status
+                END AS read_status,
+                t.book_ratings AS rating;
             """,
             (payload.read_status, payload.rating, user["user_id"], book_title.strip()),
         )

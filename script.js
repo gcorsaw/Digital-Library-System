@@ -340,17 +340,33 @@ if (sideMenu) {
         } catch (err) { alert(`Error: ${err.message}`); }
       }
       else if (action === "remove") {
-        const bookTitle = prompt("Enter the exact Book Title you want to permanently delete:");
-        if (!bookTitle) return;
-        if (!confirm(`Are you sure you want to delete "${bookTitle}"?`)) return;
+        const entryType = prompt("Remove a book or game? Enter 'book' or 'game':");
+        if (!entryType) return;
+        const normalizedType = entryType.trim().toLowerCase();
+        if (normalizedType !== "book" && normalizedType !== "game") {
+          alert("Please enter either 'book' or 'game'.");
+          return;
+        }
+
+        const isBook = normalizedType === "book";
+        const titleLabel = isBook ? "Book" : "Game";
+        const entryTitle = prompt(`Enter the exact ${titleLabel} Title you want to remove:`);
+        if (!entryTitle) return;
+        if (!confirm(`Are you sure you want to remove "${entryTitle}" from your library?`)) return;
         try {
           const headers = {};
           if (currentAuthToken) headers["Authorization"] = `Bearer ${currentAuthToken}`;
-          const res = await fetch(`${API_BASE_URL}/books?book_title=${encodeURIComponent(bookTitle)}`, { method: "DELETE", headers: headers });
+          const resource = isBook ? "books" : "games";
+          const titleParam = isBook ? "book_title" : "game_title";
+          const res = await fetch(
+            `${API_BASE_URL}/${resource}?${titleParam}=${encodeURIComponent(entryTitle)}`,
+            { method: "DELETE", headers: headers }
+          );
           const data = await res.json();
           if (!res.ok) throw new Error(data.detail || "Deletion failed");
-          alert("Entry deleted successfully!");
-          if (typeof routeHandlers["/books"] === "function") { await routeHandlers["/books"](); }
+          alert(`${titleLabel} removed from your library.`);
+          const route = isBook ? "/books" : "/games";
+          if (typeof routeHandlers[route] === "function") { await routeHandlers[route](); }
         } catch (err) { alert(`Error: ${err.message}`); }
       }
       else if (action === "progress") {
@@ -497,6 +513,70 @@ async function loadRoute(route) {
     renderError(error instanceof Error ? error.message : String(error));
   }
 }
+
+async function exportLibrary() {
+  const [bookData, gameData] = await Promise.all([
+    fetchJSON("/books"),
+    fetchJSON("/games"),
+  ]);
+
+  const lines = [
+    "Digital Library Export",
+    `Exported: ${new Date().toLocaleString()}`,
+    "",
+    `BOOKS (${bookData.books.length})`,
+    "-----",
+  ];
+
+  const addField = (label, value) => {
+    if (value !== null && value !== undefined && String(value).trim() !== "") {
+      lines.push(`${label}: ${value}`);
+    }
+  };
+
+  if (bookData.books.length === 0) {
+    lines.push("No books in this library.");
+  } else {
+    bookData.books.forEach((book, index) => {
+      if (index > 0) lines.push("");
+      lines.push(`Title: ${book.book_title}`);
+      addField("ISBN", book.book_isbn);
+      addField("Internal code", book.internal_code);
+      addField("Published", book.publish_date);
+      addField("Publisher", book.publisher);
+      addField("Reading status", book.read_status);
+      addField("Description", book.book_description);
+      addField("Notes", book.book_summary);
+    });
+  }
+
+  lines.push("", `GAMES (${gameData.games.length})`, "-----");
+  if (gameData.games.length === 0) {
+    lines.push("No games in this library.");
+  } else {
+    gameData.games.forEach((game, index) => {
+      if (index > 0) lines.push("");
+      lines.push(`Title: ${game.game_title}`);
+      addField("Publisher", game.publisher);
+      addField("Released", game.release_date);
+      addField("Play status", game.play_status);
+      addField("Description", game.game_description);
+      addField("Notes", game.game_notes);
+    });
+  }
+
+  const file = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+  const downloadUrl = URL.createObjectURL(file);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = `digital-library-${new Date().toISOString().slice(0, 10)}.txt`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(downloadUrl), 0);
+}
+
+routeHandlers["/export"] = exportLibrary;
 
 tiles.forEach((tile) => {
   tile.addEventListener("click", () => loadRoute(tile.dataset.route));

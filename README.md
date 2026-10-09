@@ -9,8 +9,11 @@ docker compose up --build -d
 ```
 
 Open [http://localhost:8080](http://localhost:8080). The frontend sends API
-requests to the same origin, and Nginx proxies `/auth` and `/books` to the
-backend. The backend API is also available locally at
+requests to the same origin, and Nginx proxies `/auth`, `/books`, and `/games`
+to the backend. Each account has a private PostgreSQL schema in the shared
+database; schemas are created empty when a user registers or first signs in.
+Existing shared catalog data is left untouched and is not copied into personal
+schemas. The backend API is also available locally at
 [http://localhost:8001](http://localhost:8001); this avoids conflicting with a
 locally running `uv run fastapi dev` server on port 8000.
 
