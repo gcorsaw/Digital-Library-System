@@ -96,7 +96,27 @@
         </button>
       </section>
 
-      <!-- ===== Results, filled in by script.js after a tile click ===== -->
+      <!-- ===== Book and game collections ===== -->
+      <section id="collectionView" class="collection" hidden>
+        <div class="collection__tabs" role="tablist" aria-label="Library collections">
+          <button type="button" id="booksTab" class="collection__tab" role="tab"
+                  aria-controls="booksPanel" aria-selected="true" data-route="/books">Books</button>
+          <button type="button" id="gamesTab" class="collection__tab" role="tab"
+                  aria-controls="gamesPanel" aria-selected="false" data-route="/games">Games</button>
+        </div>
+
+        <section id="booksPanel" class="results" role="tabpanel" aria-labelledby="booksTab">
+          <h2 id="booksTitle" class="results__title">Your books</h2>
+          <ul id="booksList" class="results__list"></ul>
+        </section>
+
+        <section id="gamesPanel" class="results" role="tabpanel" aria-labelledby="gamesTab" hidden>
+          <h2 id="gamesTitle" class="results__title">Your games</h2>
+          <ul id="gamesList" class="results__list"></ul>
+        </section>
+      </section>
+
+      <!-- ===== Search and combined results ===== -->
       <section id="results" class="results" hidden>
         <h2 id="resultsTitle" class="results__title"></h2>
         <ul id="resultsList" class="results__list"></ul>

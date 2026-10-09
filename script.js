@@ -16,6 +16,7 @@ const menuBtn = document.getElementById("menuBtn");
 const sideMenu = document.getElementById("sideMenu");
 
 const tiles = document.querySelectorAll(".tile");
+const collectionView = document.getElementById("collectionView");
 const resultsSection = document.getElementById("results");
 const resultsTitle = document.getElementById("resultsTitle");
 const resultsList = document.getElementById("resultsList");
@@ -142,6 +143,7 @@ loginBtn.addEventListener("click", async () => {
     currentUsername = "guest";
     syncAuthState();
     if (resultsSection) resultsSection.hidden = true;
+    if (collectionView) collectionView.hidden = true;
   } else {
     const usernameOrEmail = prompt("Enter your username or email:");
     if (!usernameOrEmail) return;
@@ -380,8 +382,24 @@ if (sideMenu) {
 }
 
 // --- Data View Building ---
+const tabViews = {
+  "/books": {
+    tab: document.getElementById("booksTab"),
+    panel: document.getElementById("booksPanel"),
+    title: document.getElementById("booksTitle"),
+    list: document.getElementById("booksList"),
+  },
+  "/games": {
+    tab: document.getElementById("gamesTab"),
+    panel: document.getElementById("gamesPanel"),
+    title: document.getElementById("gamesTitle"),
+    list: document.getElementById("gamesList"),
+  },
+};
+
 function renderResults(title, rows) {
   if (!resultsTitle || !resultsList || !resultsSection) return;
+  if (collectionView) collectionView.hidden = true;
   resultsTitle.textContent = title;
   resultsList.innerHTML = "";
   if (rows.length === 0) {
@@ -396,11 +414,40 @@ function renderResults(title, rows) {
     });
   }
   resultsSection.hidden = false;
-  resultsSection.style.display = "block";
+}
+
+function renderCollection(route, title, rows) {
+  const view = tabViews[route];
+  if (!view) return;
+
+  if (collectionView) collectionView.hidden = false;
+  if (resultsSection) resultsSection.hidden = true;
+
+  Object.entries(tabViews).forEach(([key, tabView]) => {
+    const isActive = key === route;
+    tabView.tab.setAttribute("aria-selected", String(isActive));
+    tabView.panel.hidden = !isActive;
+  });
+
+  view.title.textContent = title;
+  view.list.replaceChildren();
+  if (rows.length === 0) {
+    const li = document.createElement("li");
+    li.textContent = "Nothing here yet.";
+    view.list.appendChild(li);
+    return;
+  }
+
+  rows.forEach((row) => {
+    const li = document.createElement("li");
+    li.textContent = row;
+    view.list.appendChild(li);
+  });
 }
 
 function renderError(message) {
   if (!resultsTitle || !resultsList || !resultsSection) return;
+  if (collectionView) collectionView.hidden = true;
   resultsTitle.textContent = "Couldn't load that";
   resultsList.innerHTML = "";
   const li = document.createElement("li");
@@ -411,16 +458,16 @@ function renderError(message) {
 
 const routeHandlers = {
   "/books": async () => {
-    const data = await fetchJSON("/books"); 
-    renderResults("Your books", data.books.map((b) => {
-      const statusStr = b.read_status ? ` [${b.read_status}]` : "";
-      const ratingStr = b.rating ? ` (${b.rating}★)` : "";
-      return `${b.book_title}${statusStr}${ratingStr}`;
+    const data = await fetchJSON("/books");
+    renderCollection("/books", "Your books", data.books.map((b) => {
+      const status = b.read_status ? ` [${b.read_status}]` : "";
+      const rating = b.rating ? ` (${b.rating}★)` : "";
+      return `${b.book_title}${status}${rating}`;
     }));
   },
   "/games": async () => {
     const data = await fetchJSON("/games");
-    renderResults("Your games", data.games.map((g) => g.game_title));
+    renderCollection("/games", "Your games", data.games.map((g) => g.game_title));
   },
   "/all": async () => {
     const [books, games] = await Promise.all([
@@ -439,21 +486,26 @@ const routeHandlers = {
   },
 };
 
-if(tiles){
-    tiles.forEach((tile) => {
-        tile.addEventListener("click", async() =>{
-            const handler = routeHandlers[tile.dataset.route];
-            if(!handler) return;
-            try{
-                await handler();
-            } catch (error){
-                console.error(error);
-                renderError(error.message);
-            }
-        });
-    });
+async function loadRoute(route) {
+  const handler = routeHandlers[route];
+  if (!handler) return;
+
+  try {
+    await handler();
+  } catch (error) {
+    console.error(error);
+    renderError(error instanceof Error ? error.message : String(error));
+  }
 }
 
+tiles.forEach((tile) => {
+  tile.addEventListener("click", () => loadRoute(tile.dataset.route));
+});
+
+Object.entries(tabViews).forEach(([route, view]) => {
+  view.tab.addEventListener("click", () => loadRoute(route));
+});
+
 window.addEventListener("DOMContentLoaded", () => {
-    syncAuthState();
+  syncAuthState();
 });
