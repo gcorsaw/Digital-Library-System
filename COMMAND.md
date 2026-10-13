@@ -99,11 +99,14 @@ Rebuild and restart after changing backend code or the Dockerfile:
 docker compose up --build -d
 ```
 
-Recreate the web server after changing the frontend files or `nginx.conf`:
+Recreate the web server after changing frontend files such as `script.js` or
+`index.html`, or after changing `nginx.conf`:
 
 ```bash
 docker compose up -d --force-recreate web_ui
 ```
+
+Then refresh the browser to load the updated page and JavaScript.
 
 Stop the app while keeping the PostgreSQL data:
 
@@ -116,6 +119,213 @@ Start it again later:
 ```bash
 docker compose up -d
 ```
+
+## GitHub branch, pull, merge, and push commands
+
+Run these from the repository root. Replace `main` with the repository's
+default branch if it uses a different name, and replace the example feature
+branch name with one that describes your work.
+
+Check your current branch, working-tree changes, and GitHub remote:
+
+```bash
+git status
+git branch --show-current
+git remote -v
+```
+
+If no remote is listed, add your GitHub repository as `origin` (replace the
+URL with your repository's URL):
+
+```bash
+git remote add origin https://github.com/USERNAME/REPOSITORY.git
+```
+
+Get the latest default branch and create a feature branch:
+
+```bash
+git switch main
+git pull --ff-only origin main
+git switch -c feature/describe-your-change
+```
+
+Stage and commit your changes:
+
+```bash
+git add .
+git status
+git commit -m "Describe your change"
+```
+
+Push the new branch to GitHub and set its upstream, so later pushes can use
+`git push`:
+
+```bash
+git push -u origin feature/describe-your-change
+```
+
+To update your feature branch with the latest default branch, first fetch the
+latest remote commits, then merge them into your feature branch:
+
+```bash
+git switch feature/describe-your-change
+git fetch origin
+git merge origin/main
+```
+
+If there are merge conflicts, edit the files to resolve the marked sections,
+then stage the resolved files and complete the merge:
+
+```bash
+git status
+git add path/to/resolved-file
+git commit
+```
+
+Push the updated feature branch:
+
+```bash
+git push
+```
+
+You can then open a pull request on GitHub to merge the feature branch into
+`main`. After the pull request is merged, update your local default branch:
+
+```bash
+git switch main
+git pull --ff-only origin main
+```
+
+Alternatively, to merge locally instead of using a GitHub pull request, update
+`main`, merge the feature branch, and push `main`:
+
+```bash
+git switch main
+git pull --ff-only origin main
+git merge --no-ff feature/describe-your-change
+git push origin main
+```
+
+Review `git status` and the changes before committing or pushing. Do not commit
+`.env` or other credentials.
+
+### Common branch problems
+
+If Git will not let you switch branches because you have uncommitted changes,
+either commit them or temporarily stash them. To stash tracked and untracked
+files:
+
+```bash
+git status
+git stash push -u -m "work in progress"
+git switch feature/describe-your-change
+```
+
+Restore the stashed changes when ready:
+
+```bash
+git stash list
+git stash pop
+```
+
+If the branch already exists locally and `git switch -c` says it cannot create
+it, switch to it without `-c`:
+
+```bash
+git switch feature/describe-your-change
+```
+
+If the branch exists on GitHub but not locally, fetch it and create a local
+branch that tracks the remote:
+
+```bash
+git fetch origin
+git switch --track origin/feature/describe-your-change
+```
+
+If a push is rejected because the remote branch has commits you do not have,
+fetch and merge the remote branch, resolve any conflicts, then push again:
+
+```bash
+git fetch origin
+git merge origin/feature/describe-your-change
+git push
+```
+
+If a merge has conflicts, use `git status` to see which files need attention.
+Edit each file to resolve the conflict markers, then stage the resolved files
+and finish the merge:
+
+```bash
+git status
+git add path/to/resolved-file
+git commit
+```
+
+If you want to cancel a merge before completing it, run:
+
+```bash
+git merge --abort
+```
+
+If GitHub says you cannot push to a protected default branch, do not force
+push. Create or switch to a feature branch, push that branch, and open a pull
+request:
+
+```bash
+git switch -c feature/describe-your-change
+git push -u origin feature/describe-your-change
+```
+
+### Delete a branch
+
+Before deleting a branch, check its status and make sure any work you want to
+keep has been merged or pushed:
+
+```bash
+git status
+git branch --merged main
+git branch -vv
+```
+
+To delete a local branch, first switch to a different branch. The safe `-d`
+option deletes the branch only if Git considers it fully merged:
+
+```bash
+git switch main
+git branch -d feature/describe-your-change
+```
+
+To also delete the branch from GitHub:
+
+```bash
+git push origin --delete feature/describe-your-change
+git fetch --prune origin
+```
+
+If Git says the branch is not fully merged, do not immediately force-delete
+it. Review commits that are not in `main` and preserve any work you need:
+
+```bash
+git log --oneline main..feature/describe-your-change
+git diff main...feature/describe-your-change
+```
+
+Merge or push the branch if its changes should be kept. Only if you have
+confirmed that you no longer need its unmerged changes, delete the local branch
+with the force option:
+
+```bash
+git branch -D feature/describe-your-change
+```
+
+If Git says the branch is currently checked out, switch to another branch
+first. If GitHub refuses to delete a remote branch, check that you have write
+permission and that branch protection rules allow deletion.
+
+Avoid `git push --force` and commands that discard local changes unless you
+understand exactly what will be lost. Check `git status` before recovery
+commands.
 
 ## Database data warning
 

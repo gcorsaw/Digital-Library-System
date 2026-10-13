@@ -89,12 +89,23 @@ function resetUsernameTitle() {
   userNameEl.textContent = "guest";
 }
 
+function clearAuthSession() {
+  localStorage.removeItem("library_auth_token");
+  localStorage.removeItem("library_username");
+  currentAuthToken = null;
+  currentUsername = "guest";
+  syncAuthState();
+}
+
 function syncAuthState() {
   if (currentAuthToken) {
     loginBtn.setAttribute("aria-pressed", "true");
     loginLabel.textContent = "Log out";
     if (signupBtn) signupBtn.hidden = true;
     updateUsernameTitle(currentUsername);
+    if (resultsTitle?.textContent === "Log in to view your library") {
+      resultsSection.hidden = true;
+    }
   } else {
     loginBtn.setAttribute("aria-pressed", "false");
     loginLabel.textContent = "Log in";
@@ -137,11 +148,7 @@ if (signupBtn) {
 
 loginBtn.addEventListener("click", async () => {
   if (currentAuthToken) {
-    localStorage.removeItem("library_auth_token");
-    localStorage.removeItem("library_username");
-    currentAuthToken = null;
-    currentUsername = "guest";
-    syncAuthState();
+    clearAuthSession();
     if (resultsSection) resultsSection.hidden = true;
     if (collectionView) collectionView.hidden = true;
   } else {
@@ -218,7 +225,9 @@ async function fetchJSON(path) {
 
   const res = await fetch(`${API_BASE_URL}${path}`, { headers: headers });
   if (!res.ok) {
-    throw new Error(`${path} responded with ${res.status}`);
+    const error = new Error(`${path} responded with ${res.status}`);
+    error.status = res.status;
+    throw error;
   }
   return res.json();
 }
@@ -461,6 +470,25 @@ function renderCollection(route, title, rows) {
   });
 }
 
+function renderLoginRequired() {
+  if (!resultsTitle || !resultsList || !resultsSection) return;
+  if (collectionView) collectionView.hidden = true;
+  resultsTitle.textContent = "Log in to view your library";
+  resultsList.replaceChildren();
+
+  const message = document.createElement("li");
+  message.textContent = "Your books and games are private to your account.";
+  const loginItem = document.createElement("li");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "login-btn";
+  button.textContent = "Log in";
+  button.addEventListener("click", () => loginBtn.click());
+  loginItem.appendChild(button);
+  resultsList.append(message, loginItem);
+  resultsSection.hidden = false;
+}
+
 function renderError(message) {
   if (!resultsTitle || !resultsList || !resultsSection) return;
   if (collectionView) collectionView.hidden = true;
@@ -506,10 +534,20 @@ async function loadRoute(route) {
   const handler = routeHandlers[route];
   if (!handler) return;
 
+  if (!currentAuthToken) {
+    renderLoginRequired();
+    return;
+  }
+
   try {
     await handler();
   } catch (error) {
     console.error(error);
+    if (error instanceof Error && error.status === 401) {
+      clearAuthSession();
+      renderLoginRequired();
+      return;
+    }
     renderError(error instanceof Error ? error.message : String(error));
   }
 }
