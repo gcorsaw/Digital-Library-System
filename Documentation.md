@@ -262,5 +262,6 @@
 
 * __Tuesday (10-13-2026)__
     * The first task that I worked on was creating some more code for test coverage in my Unit test file. This is just to ensure that all of the functions are being tested to their fully ability. This is just to ensure that if we have an if-statment or an if-else statment were to exist, the second condition would be tested as well. 
-    * The second task that I am intending to work on is to practice branching (such as merging, pulling, or pushing) to GitHub. This is going to be useful because it's going to build muscle memory and to perform further reseasrch on that process. 
+    * The second task that I am planning on working on is to practice branching (such as merging, pulling, or pushing) to GitHub. This is going to be useful because it's going to build muscle memory and to perform further reseasrch on that process. 
     * The third task that I would like to try and accomplish is to try and get my Cognito to be able to authenticaate the User interface. I would probably need to perform some research on how I might be able to do that task for a few hours either on Wednesday or in my second work block as well.
+    * The second task that I completed was performing more reasearch on test coverage from the first task earlier this particular day. I found it interesting that it would be ideal if we could get 100% test coverage. I also found a tutorial for creating a new branch in Github for me to practice with.

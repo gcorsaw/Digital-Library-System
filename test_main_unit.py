@@ -710,6 +710,7 @@ def test_database_manager_lazily_connects_and_guards_release(monkeypatch):
         monkeypatch.setenv(name, value)
 
     assert manager.get_conn() is connection
+    assert manager.get_conn() is connection
     factory.assert_called_once()
     manager.release_conn(connection)
     manager.release_conn(None)
@@ -717,6 +718,14 @@ def test_database_manager_lazily_connects_and_guards_release(monkeypatch):
     manager.close_pool()
     manager.close_pool()
     pool.closeall.assert_called_once_with()
+
+
+def test_database_manager_does_not_release_without_initialized_pool():
+    manager = main.DatabaseManager()
+
+    manager.release_conn(MagicMock())
+
+    assert manager._pool is None
 
 
 def test_database_manager_propagates_pool_initialization_errors(monkeypatch):
@@ -881,6 +890,14 @@ def test_connect_closes_connection_after_success_or_error(monkeypatch):
     with pytest.raises(RuntimeError, match="query failed"):
         main.connect()
     failed_connection.close.assert_called_once_with()
+
+    monkeypatch.setattr(
+        main.psycopg2,
+        "connect",
+        MagicMock(side_effect=OSError("connection refused")),
+    )
+    with pytest.raises(OSError, match="connection refused"):
+        main.connect()
 
 
 @pytest.mark.parametrize(
@@ -1155,3 +1172,169 @@ def test_update_book_progress_returns_updated_record():
 
     assert result == {"status": "success", "updated_record": row}
     assert cursor.execute.call_args.args[1] == ("read", 5, USER["user_id"], "Example")
+
+
+@pytest.mark.parametrize(
+    ("username", "email", "message"),
+    [
+        ("invalid username", "reader@example.com", "Username must be 3-30 characters"),
+        ("reader", "not-an-email", "Enter a valid email address"),
+        ("reader", "a" * 245 + "@example.com", "Enter a valid email address"),
+    ],
+)
+def test_register_request_rejects_invalid_username_or_email(username, email, message):
+    with pytest.raises(ValueError, match=message):
+        main.RegisterRequest(username=username, email=email, password="password123")
+
+
+def test_get_current_user_requires_credentials():
+    with pytest.raises(HTTPException) as error:
+        main.get_current_user(None, MagicMock())
+
+    assert error.value.status_code == 401
+    assert error.value.headers == {"WWW-Authenticate": "Bearer"}
+
+
+def test_read_me_returns_authenticated_user():
+    assert main.read_me(USER) == {"user": USER}
+
+
+@pytest.mark.parametrize(
+    ("book_data", "message"),
+    [
+        ({"book_title": "   ", "book_isbn": "ISBN-1"}, "book_title cannot be empty"),
+        ({"book_title": "Example"}, "Either book_isbn or internal_code is required"),
+    ],
+)
+def test_book_model_rejects_empty_title_or_missing_identifier(book_data, message):
+    with pytest.raises(ValueError, match=message):
+        main.Book(**book_data)
+
+
+def test_search_title_rejects_blank_term_and_translates_database_error():
+    cursor = MagicMock()
+    with pytest.raises(HTTPException) as blank:
+        main.search_title_by_word("   ", USER, cursor)
+    assert blank.value.status_code == 400
+    cursor.execute.assert_not_called()
+
+    cursor.execute.side_effect = RuntimeError("database unavailable")
+    with pytest.raises(HTTPException) as failed:
+        main.search_title_by_word("Example", USER, cursor)
+    assert failed.value.status_code == 500
+    assert failed.value.detail == "Search failed: database unavailable"
+
+
+def test_search_books_by_pages_translates_database_error():
+    cursor = MagicMock()
+    cursor.execute.side_effect = RuntimeError("database unavailable")
+
+    with pytest.raises(HTTPException) as error:
+        main.search_books_by_pages(10, 20, cursor)
+
+    assert error.value.status_code == 500
+    assert error.value.detail == "Search by page count failed: database unavailable"
+
+
+def test_get_book_details_translates_database_error():
+    cursor = MagicMock()
+    cursor.execute.side_effect = RuntimeError("database unavailable")
+
+    with pytest.raises(HTTPException) as error:
+        main.get_book_details(9, cursor)
+
+    assert error.value.status_code == 500
+    assert error.value.detail == "database unavailable"
+
+
+def test_get_book_database_prints_rows_and_releases_connection(monkeypatch, capsys):
+    connection = MagicMock()
+    cursor = MagicMock()
+    cursor.fetchall.return_value = [{"book_title": "Example"}, {"book_title": "Another"}]
+    connection.cursor.return_value = cursor
+    monkeypatch.setattr(main.db_manager, "get_conn", lambda: connection)
+    release = MagicMock()
+    monkeypatch.setattr(main.db_manager, "release_conn", release)
+
+    assert main.get_book_database() == [
+        {"book_title": "Example"},
+        {"book_title": "Another"},
+    ]
+    assert capsys.readouterr().out == "Found 2 books:\nExample\nAnother\n"
+    cursor.close.assert_called_once_with()
+    release.assert_called_once_with(connection)
+
+
+def test_get_book_database_reraises_errors_and_releases_connection(monkeypatch, capsys):
+    connection = MagicMock()
+    connection.cursor.side_effect = RuntimeError("database unavailable")
+    monkeypatch.setattr(main.db_manager, "get_conn", lambda: connection)
+    release = MagicMock()
+    monkeypatch.setattr(main.db_manager, "release_conn", release)
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        main.get_book_database()
+
+    assert capsys.readouterr().out == "database unavailable\n"
+    release.assert_called_once_with(connection)
+
+
+def test_game_model_rejects_blank_title():
+    with pytest.raises(ValueError, match="game_title cannot be empty"):
+        main.Game(game_title="   ")
+
+
+def test_delete_game_returns_removed_game():
+    cursor = MagicMock()
+    cursor.fetchone.return_value = {"game_id": 4, "game_title": "Catan"}
+
+    assert main.delete_game_endpoint(" Catan ", USER, cursor) == {
+        "message": "Game removed from your library",
+        "game": {"game_id": 4, "game_title": "Catan"},
+    }
+    assert cursor.execute.call_args.args[1] == ("Catan", USER["user_id"])
+
+
+def test_main_entrypoint_runs_with_optional_dotenv_and_mocked_database(monkeypatch):
+    import builtins
+    import runpy
+
+    original_import = builtins.__import__
+
+    def import_without_dotenv(name, *args, **kwargs):
+        if name == "dotenv":
+            raise ImportError("dotenv unavailable")
+        return original_import(name, *args, **kwargs)
+
+    pool = MagicMock()
+    monkeypatch.setattr(main.psycopg2.pool, "SimpleConnectionPool", MagicMock(return_value=pool))
+    run_server = MagicMock()
+    monkeypatch.setattr(main.uvicorn, "run", run_server)
+    monkeypatch.setattr(builtins, "__import__", import_without_dotenv)
+
+    runpy.run_path(main.__file__, run_name="__main__")
+
+    pool.getconn.assert_called_once_with()
+    pool.putconn.assert_called_once()
+    pool.closeall.assert_not_called()
+    run_server.assert_called_once_with("main:library_app", host="0.0.0.0", port=8000, reload=True)
+
+
+def test_main_continues_when_database_check_fails(monkeypatch, capsys):
+    database_check = MagicMock(side_effect=RuntimeError("database unavailable"))
+    initialize_pool = MagicMock()
+    run_server = MagicMock()
+    monkeypatch.setattr(main, "get_book_database", database_check)
+    monkeypatch.setattr(main.db_manager, "initialize_pool", initialize_pool)
+    monkeypatch.setattr(main.uvicorn, "run", run_server)
+
+    main.main()
+
+    assert capsys.readouterr().out == (
+        "Hello from digital-library-system!\n"
+        "Main execution warning: Local database check failed (database unavailable)\n"
+    )
+    initialize_pool.assert_called_once_with()
+    run_server.assert_called_once_with(
+        "main:library_app", host="0.0.0.0", port=8000, reload=True
+    )
