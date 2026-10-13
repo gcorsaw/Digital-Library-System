@@ -674,3 +674,484 @@ def test_author_and_game_helpers_use_mocked_connection(monkeypatch):
     assert main.add_multiple_authors() == [{"author_id": 1}]
     assert main.search_all_games() == [{"game_id": 2}]
     assert release.call_args_list == [call(connection), call(connection)]
+
+
+def test_load_db_config_uses_defaults_and_environment(monkeypatch):
+    for name in ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD", "DB_PORT"):
+        monkeypatch.delenv(name, raising=False)
+    assert main.load_db_config() == {
+        "host": "localhost",
+        "database": "digital_library",
+        "user": "postgres",
+        "password": "secretpassword",
+        "port": "5440",
+    }
+
+    monkeypatch.setenv("DB_HOST", "db.internal")
+    monkeypatch.setenv("DB_PORT", "5544")
+    assert main.load_db_config()["host"] == "db.internal"
+    assert main.load_db_config()["port"] == "5544"
+
+
+def test_database_manager_lazily_connects_and_guards_release(monkeypatch):
+    manager = main.DatabaseManager()
+    pool = MagicMock()
+    connection = MagicMock()
+    pool.getconn.return_value = connection
+    factory = MagicMock(return_value=pool)
+    monkeypatch.setattr(main, "SimpleConnectionPool", factory)
+    for name, value in {
+        "DB_NAME": "library_test",
+        "DB_USER": "tester",
+        "DB_PASSWORD": "password",
+        "DB_HOST": "localhost",
+        "DB_PORT": "5440",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    assert manager.get_conn() is connection
+    factory.assert_called_once()
+    manager.release_conn(connection)
+    manager.release_conn(None)
+    pool.putconn.assert_called_once_with(connection)
+    manager.close_pool()
+    manager.close_pool()
+    pool.closeall.assert_called_once_with()
+
+
+def test_database_manager_propagates_pool_initialization_errors(monkeypatch):
+    manager = main.DatabaseManager()
+    factory = MagicMock(side_effect=OSError("pool unavailable"))
+    monkeypatch.setattr(main, "SimpleConnectionPool", factory)
+    for name in ("DB_NAME", "DB_USER", "DB_PASSWORD", "DB_HOST"):
+        monkeypatch.setenv(name, "configured")
+
+    with pytest.raises(OSError, match="pool unavailable"):
+        manager.initialize_pool()
+    assert manager._pool is None
+
+
+def test_lifespan_initializes_and_closes_database_pool(monkeypatch):
+    initialize = MagicMock()
+    close = MagicMock()
+    monkeypatch.setattr(main.db_manager, "initialize_pool", initialize)
+    monkeypatch.setattr(main.db_manager, "close_pool", close)
+
+    async def run_lifespan():
+        async with main.lifespan(main.library_app):
+            initialize.assert_called_once_with()
+            close.assert_not_called()
+
+    asyncio.run(run_lifespan())
+    close.assert_called_once_with()
+
+
+def test_activate_user_schema_skips_creation_when_schema_is_ready():
+    cursor = MagicMock()
+    cursor.fetchone.return_value = {"book_info": "book_info"}
+
+    main.activate_user_schema(cursor, 7)
+
+    assert cursor.execute.call_count == 4
+    assert cursor.execute.call_args_list[0].args[1] == (7,)
+
+
+def test_activate_user_schema_creates_schema_and_reports_missing_citext(monkeypatch, tmp_path):
+    cursor = MagicMock()
+    cursor.fetchone.side_effect = [{"book_info": None}, None]
+
+    with pytest.raises(RuntimeError, match="citext extension must be installed"):
+        main.activate_user_schema(cursor, 7)
+
+    assert cursor.execute.call_count == 5
+
+    schema_file = tmp_path / "user-schema.sql"
+    schema_file.write_text("CREATE TABLE sample (value public.citext);")
+    cursor = MagicMock()
+    cursor.fetchone.side_effect = [{"book_info": None}, {"nspname": "extensions"}]
+    monkeypatch.setattr(main, "USER_SCHEMA_FILE", schema_file)
+    monkeypatch.setattr(main.sql.ext, "quote_ident", lambda identifier, context: f'"{identifier}"')
+
+    main.activate_user_schema(cursor, 7)
+
+    assert cursor.execute.call_count == 6
+    assert '"extensions".citext' in cursor.execute.call_args.args[0]
+
+
+def test_cognito_key_fetch_failure_is_logged_and_returns_empty_keys(monkeypatch, caplog):
+    monkeypatch.setattr(main, "_COGNITO_JWKS", None)
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setattr(main.requests, "get", MagicMock(side_effect=OSError("network down")))
+
+    assert main.get_cognito_public_keys() == []
+    assert "Failed to pull Cognito JWKS certificates" in caplog.text
+
+
+def test_verify_cognito_token_uses_matching_public_key(monkeypatch):
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="cognito-token")
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    monkeypatch.setattr(main, "get_cognito_public_keys", lambda: [{"kid": "key-1"}])
+    decode = MagicMock(
+        side_effect=[
+            {"iss": "https://cognito-idp.us-west-2.amazonaws.com/pool-123"},
+            {"sub": "cognito-user", "username": "reader"},
+        ]
+    )
+    monkeypatch.setattr(main.jwt, "get_unverified_header", lambda token: {"kid": "key-1"})
+    monkeypatch.setattr(main.jwt, "decode", decode)
+
+    result = asyncio.run(main.verify_cognito_or_jwt(credentials))
+
+    assert result == {
+        "identity_provider": "aws_cognito",
+        "user_id": "cognito-user",
+        "username": "reader",
+    }
+    assert decode.call_args.kwargs == {
+        "algorithms": ["RS256"],
+        "audience": "client-456",
+        "issuer": "https://cognito-idp.us-west-2.amazonaws.com/pool-123",
+    }
+
+
+def test_verify_cognito_token_rejects_unmatched_key(monkeypatch):
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="cognito-token")
+    monkeypatch.setenv("USE_COGNITO", "true")
+    monkeypatch.setattr(main, "get_cognito_public_keys", lambda: [{"kid": "other-key"}])
+    monkeypatch.setattr(main.jwt, "get_unverified_header", lambda token: {"kid": "missing-key"})
+    monkeypatch.setattr(main.jwt, "decode", lambda *args, **kwargs: {})
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(main.verify_cognito_or_jwt(credentials))
+
+    assert error.value.status_code == 401
+    assert "Matching cloud validation certificate key not found" in error.value.detail
+
+
+def test_register_translates_unique_violation(monkeypatch):
+    cursor = MagicMock()
+    cursor.execute.side_effect = main.psycopg2.errors.UniqueViolation("duplicate")
+    monkeypatch.setattr(main, "password_hasher", MagicMock())
+
+    with pytest.raises(HTTPException) as error:
+        main.register(main.RegisterRequest(username="reader", email="reader@example.com", password="password123"), cursor)
+
+    assert error.value.status_code == 409
+
+
+@pytest.mark.parametrize(
+    "verification_error",
+    [main.VerificationError("invalid hash"), main.InvalidHashError("invalid hash")],
+)
+def test_login_rejects_unverifiable_password_hash(monkeypatch, verification_error):
+    cursor = MagicMock()
+    cursor.fetchone.return_value = {**USER, "password_hash": "invalid-hash"}
+    hasher = MagicMock()
+    hasher.verify.side_effect = verification_error
+    monkeypatch.setattr(main, "password_hasher", hasher)
+
+    with pytest.raises(HTTPException) as error:
+        main.login(main.LoginRequest(username="reader", password="password123"), cursor)
+
+    assert error.value.status_code == 401
+
+
+def test_connect_closes_connection_after_success_or_error(monkeypatch):
+    connection = MagicMock()
+    monkeypatch.setattr(main.psycopg2, "connect", MagicMock(return_value=connection))
+    for name, value in {
+        "DB_NAME": "library_test",
+        "DB_USER": "tester",
+        "DB_PASSWORD": "password",
+        "DB_HOST": "localhost",
+        "DB_PORT": "5440",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    main.connect()
+
+    connection.cursor.return_value.execute.assert_called_once_with("SELECT version();")
+    connection.close.assert_called_once_with()
+
+    failed_connection = MagicMock()
+    failed_connection.cursor.return_value.execute.side_effect = RuntimeError("query failed")
+    monkeypatch.setattr(main.psycopg2, "connect", MagicMock(return_value=failed_connection))
+    with pytest.raises(RuntimeError, match="query failed"):
+        main.connect()
+    failed_connection.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "expected_query"),
+    [
+        (main.get_book_summaries_from_database, "SELECT book_id, book_title FROM book_info;"),
+        (main.get_details_from_database, "SELECT * FROM book_info;"),
+    ],
+)
+def test_book_listing_endpoints_return_rows(endpoint, expected_query):
+    cursor = MagicMock()
+    cursor.fetchall.return_value = [{"book_id": 1}]
+
+    assert endpoint(USER, cursor) == {"books": [{"book_id": 1}]}
+    cursor.execute.assert_called_once_with(expected_query)
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "expected_detail"),
+    [
+        (main.get_book_summaries_from_database, "Could not find book details"),
+        (main.get_details_from_database, "Could not find info"),
+    ],
+)
+def test_book_listing_endpoints_translate_database_errors(endpoint, expected_detail):
+    cursor = MagicMock()
+    cursor.execute.side_effect = RuntimeError("database unavailable")
+
+    with pytest.raises(HTTPException) as error:
+        endpoint(USER, cursor)
+
+    assert error.value.status_code == 500
+    assert error.value.detail == expected_detail
+
+
+def test_user_add_book_reuses_existing_book_and_adds_author(monkeypatch):
+    existing = {"book_id": 11, "book_title": "Example"}
+    cursor = MagicMock()
+    cursor.fetchone.side_effect = [existing, {"book_id": 11}]
+
+    result = main.user_add_book(
+        main.Book(book_isbn="ISBN-11", book_title="Example"), USER, cursor
+    )
+    assert result["book"] == existing
+    assert cursor.execute.call_count == 2
+
+    cursor = MagicMock()
+    cursor.fetchone.side_effect = [None, existing, {"book_id": 11}]
+    main.user_add_book(
+        main.Book(book_isbn="ISBN-11", book_title="Example", author_id=2, creator_role_id=3),
+        USER,
+        cursor,
+    )
+    assert cursor.execute.call_count == 4
+    assert cursor.execute.call_args_list[2].args[1] == (11, 2, 3)
+
+
+@pytest.mark.parametrize(
+    ("database_error", "status_code", "detail"),
+    [
+        (main.psycopg2.errors.UniqueViolation("duplicate"), 409, "ISBN or code"),
+        (main.psycopg2.errors.ForeignKeyViolation("foreign key"), 400, "author_id"),
+        (main.psycopg2.errors.CheckViolation("check"), 400, "ISBN or an internal_code"),
+        (main.psycopg2.Error("database"), 500, "A database error occurred"),
+    ],
+)
+def test_user_add_book_translates_database_errors(database_error, status_code, detail):
+    cursor = MagicMock()
+    cursor.execute.side_effect = database_error
+
+    with pytest.raises(HTTPException) as error:
+        main.user_add_book(main.Book(book_isbn="ISBN-11", book_title="Example"), USER, cursor)
+
+    assert error.value.status_code == status_code
+    assert detail in error.value.detail
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "argument"),
+    [
+        (main.search_books_by_media_type, "media_type"),
+        (main.search_books_by_book_genre, "genre"),
+        (main.search_books_by_author, "author"),
+        (main.get_comic_book_from_database, "comic"),
+    ],
+)
+def test_book_search_endpoints_trim_and_return_results(endpoint, argument):
+    cursor = MagicMock()
+    cursor.fetchall.return_value = [{"book_id": 3}]
+
+    result = endpoint("  example  ", USER, cursor)
+
+    expected_key = "comic_books" if argument == "comic" else "books"
+    if argument == "comic":
+        assert result == {expected_key: [{"book_id": 3}]}
+    else:
+        assert result == {"query": "example", expected_key: [{"book_id": 3}]}
+    assert cursor.execute.call_args.args[1] == ("%example%",)
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "argument"),
+    [
+        (main.search_books_by_media_type, "media_type"),
+        (main.search_books_by_book_genre, "genre"),
+        (main.search_books_by_author, "author"),
+        (main.get_comic_book_from_database, "comic"),
+    ],
+)
+def test_book_search_endpoints_reject_blank_search_terms(endpoint, argument):
+    cursor = MagicMock()
+
+    with pytest.raises(HTTPException) as error:
+        endpoint("  ", USER, cursor)
+
+    assert error.value.status_code == 400
+    cursor.execute.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "argument", "message"),
+    [
+        (main.search_books_by_media_type, "media_type", "Search by media type failed"),
+        (main.search_books_by_book_genre, "genre", "Search by book genre failed"),
+        (main.search_books_by_author, "author", "Search by author failed"),
+        (main.get_comic_book_from_database, "comic", "database unavailable"),
+    ],
+)
+def test_book_search_endpoints_translate_database_errors(endpoint, argument, message):
+    cursor = MagicMock()
+    cursor.execute.side_effect = RuntimeError("database unavailable")
+
+    with pytest.raises(HTTPException) as error:
+        endpoint("example", USER, cursor)
+
+    assert error.value.status_code == 500
+    assert message in error.value.detail
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "arguments", "expected"),
+    [
+        (
+            main.description_removal,
+            (9, USER),
+            main.Book_Description(book_id=9, book_title="Example", book_description=None),
+        ),
+        (
+            main.description_change_by_id,
+            (9, main.Book_Description_Update(book_description="Notes"), USER),
+            main.Book_Description(book_id=9, book_title="Example", book_description="Notes"),
+        ),
+        (
+            main.description_change,
+            ("Example", main.Book_Description_Update(book_description="Notes"), USER),
+            main.Book_Description(book_id=9, book_title="Example", book_description="Notes"),
+        ),
+    ],
+)
+def test_book_description_endpoints_return_updated_row(endpoint, arguments, expected):
+    cursor = MagicMock()
+    cursor.fetchone.return_value = {
+        "book_id": 9,
+        "book_title": "Example",
+        "book_description": expected.book_description,
+    }
+
+    assert endpoint(*arguments, cursor) == expected
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "arguments", "message"),
+    [
+        (main.description_removal, (9, USER), main.NOT_IN_LIBRARY),
+        (main.description_change_by_id, (9, main.Book_Description_Update(book_description="Notes"), USER), main.NOT_IN_LIBRARY),
+        (main.description_change, ("Example", main.Book_Description_Update(book_description="Notes"), USER), main.NOT_IN_LIBRARY),
+        (main.delete_book_by_id, (9, USER), main.NOT_IN_LIBRARY),
+        (main.delete_book_endpoint, ("Example", USER), main.NOT_IN_LIBRARY),
+        (main.delete_game_endpoint, ("Catan", USER), "Game not found in your library."),
+        (main.update_book_progress_by_title, ("Example", main.BookProgressUpdate(read_status="read"), USER), "Book not found in your library."),
+    ],
+)
+def test_delete_and_update_endpoints_return_not_found(endpoint, arguments, message):
+    cursor = MagicMock()
+    cursor.fetchone.return_value = None
+
+    with pytest.raises(HTTPException) as error:
+        endpoint(*arguments, cursor)
+
+    assert error.value.status_code == 404
+    assert error.value.detail == message
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "arguments", "message"),
+    [
+        (main.description_removal, (9, USER), "Could not remove description"),
+        (main.description_change_by_id, (9, main.Book_Description_Update(book_description="Notes"), USER), "Could not update description"),
+        (main.description_change, ("Example", main.Book_Description_Update(book_description="Notes"), USER), "Could not update description"),
+        (main.delete_book_by_id, (9, USER), "Could not remove book"),
+        (main.delete_book_endpoint, ("Example", USER), "Could not remove book"),
+        (main.delete_game_endpoint, ("Catan", USER), "Could not remove game"),
+        (main.update_book_progress_by_title, ("Example", main.BookProgressUpdate(read_status="read"), USER), "Progress sync failed"),
+    ],
+)
+def test_delete_and_update_endpoints_translate_database_errors(endpoint, arguments, message):
+    cursor = MagicMock()
+    cursor.execute.side_effect = RuntimeError("database unavailable")
+
+    with pytest.raises(HTTPException) as error:
+        endpoint(*arguments, cursor)
+
+    assert error.value.status_code == 500
+    assert message in error.value.detail
+
+
+def test_delete_book_endpoints_remove_rows():
+    book = {"book_id": 9, "book_title": "Example"}
+    cursor = MagicMock()
+    cursor.fetchone.return_value = book
+
+    assert main.delete_book_by_id(9, USER, cursor) == {
+        "message": "Book removed from your library",
+        "book": book,
+    }
+    cursor.fetchone.return_value = book
+    assert main.delete_book_endpoint(" Example ", USER, cursor) == {
+        "message": "Book removed from your library",
+        "book": book,
+    }
+    assert cursor.execute.call_args.args[1] == ("Example", USER["user_id"])
+
+
+def test_get_all_games_returns_user_games_and_translates_errors():
+    cursor = MagicMock()
+    cursor.fetchall.return_value = [{"game_id": 4}]
+
+    assert main.get_all_games(USER, cursor) == {"games": [{"game_id": 4}]}
+    assert cursor.execute.call_args.args[1] == (USER["user_id"],)
+
+    cursor.execute.side_effect = RuntimeError("database unavailable")
+    with pytest.raises(HTTPException) as error:
+        main.get_all_games(USER, cursor)
+    assert error.value.status_code == 500
+    assert error.value.detail == "Could not retrieve games"
+
+
+def test_add_game_reuses_existing_game_and_translates_unexpected_errors():
+    cursor = MagicMock()
+    cursor.fetchone.side_effect = [{"game_id": 4, "game_title": "Catan"}, {"game_id": 4}]
+
+    result = main.add_game(main.Game(game_title="Catan"), USER, cursor)
+
+    assert result["game"]["game_id"] == 4
+    assert cursor.execute.call_count == 2
+
+    cursor.execute.side_effect = RuntimeError("database unavailable")
+    with pytest.raises(HTTPException) as error:
+        main.add_game(main.Game(game_title="Catan"), USER, cursor)
+    assert error.value.status_code == 500
+    assert "database unavailable" in error.value.detail
+
+
+def test_update_book_progress_returns_updated_record():
+    cursor = MagicMock()
+    row = {"book_id": 9, "book_title": "Example", "read_status": "read", "rating": 5}
+    cursor.fetchone.return_value = row
+
+    result = main.update_book_progress_by_title(
+        " Example ", main.BookProgressUpdate(read_status="read", rating=5), USER, cursor
+    )
+
+    assert result == {"status": "success", "updated_record": row}
+    assert cursor.execute.call_args.args[1] == ("read", 5, USER["user_id"], "Example")
