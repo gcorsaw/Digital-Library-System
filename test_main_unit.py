@@ -836,79 +836,99 @@ def test_activate_user_schema_skips_creation_when_schema_is_ready():
     assert cursor.execute.call_count == 4
     assert cursor.execute.call_args_list[0].args[1] == (7,)
 
+"""
+This function is going to test the active user schema fucntion's behavior when the citext extension is not installed. The test
+uses MagicMock to simulate the database cursor, allowing for testing without requiring an actual database. The 
+test checks that the activate_user_schema function raises a RuntimeError with a message containing "citext extension must be 
+installed" when the citext extension is not present in the database. The test also verifies that the cursor.execute method is 
+called the expected number of times, ensuring that the application manages database interactions properly and maintains resource 
+integrity. The test simulates the scenario where the citext extension is not installed in the database, allowing for the function 
+to raise the appropriate error and provide feedback to the client. The test asserts that the correct error is raised and that the 
+application behaves as expected in this edge case, providing appropriate feedback to the client and maintaining data integrity. 
+"""
+def test_activate_user_schema_creates_schema_and_reports_missing_citext(monkeypatch, tmp_path):
+    cursor = MagicMock()
+    cursor.fetchone.side_effect = [{"book_info": None}, None]
 
-# def test_activate_user_schema_creates_schema_and_reports_missing_citext(monkeypatch, tmp_path):
-#     cursor = MagicMock()
-#     cursor.fetchone.side_effect = [{"book_info": None}, None]
+    with pytest.raises(RuntimeError, match="citext extension must be installed"):
+        main.activate_user_schema(cursor, 7)
 
-#     with pytest.raises(RuntimeError, match="citext extension must be installed"):
-#         main.activate_user_schema(cursor, 7)
+    assert cursor.execute.call_count == 5
 
-#     assert cursor.execute.call_count == 5
+    schema_file = tmp_path / "user-schema.sql"
+    schema_file.write_text("CREATE TABLE sample (value public.citext);")
+    cursor = MagicMock()
+    cursor.fetchone.side_effect = [{"book_info": None}, {"nspname": "extensions"}]
+    monkeypatch.setattr(main, "USER_SCHEMA_FILE", schema_file)
+    monkeypatch.setattr(main.sql.ext, "quote_ident", lambda identifier, context: f'"{identifier}"')
 
-#     schema_file = tmp_path / "user-schema.sql"
-#     schema_file.write_text("CREATE TABLE sample (value public.citext);")
-#     cursor = MagicMock()
-#     cursor.fetchone.side_effect = [{"book_info": None}, {"nspname": "extensions"}]
-#     monkeypatch.setattr(main, "USER_SCHEMA_FILE", schema_file)
-#     monkeypatch.setattr(main.sql.ext, "quote_ident", lambda identifier, context: f'"{identifier}"')
+    main.activate_user_schema(cursor, 7)
 
-#     main.activate_user_schema(cursor, 7)
+    assert cursor.execute.call_count == 6
+    assert '"extensions".citext' in cursor.execute.call_args.args[0]
 
-#     assert cursor.execute.call_count == 6
-#     assert '"extensions".citext' in cursor.execute.call_args.args[0]
+"""
+Tests that get_cognito_public_keys returns an empty list and logs an error
+when fetching the Cognito JWKS fails.
+"""
+def test_cognito_key_fetch_failure_is_logged_and_returns_empty_keys(monkeypatch, caplog):
+    monkeypatch.setattr(main, "_COGNITO_JWKS", None)
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setattr(main.requests, "get", MagicMock(side_effect=OSError("network down")))
 
+    assert main.get_cognito_public_keys() == []
+    assert "Failed to pull Cognito JWKS certificates" in caplog.text
 
-# def test_cognito_key_fetch_failure_is_logged_and_returns_empty_keys(monkeypatch, caplog):
-#     monkeypatch.setattr(main, "_COGNITO_JWKS", None)
-#     monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
-#     monkeypatch.setattr(main.requests, "get", MagicMock(side_effect=OSError("network down")))
+"""
+Tests that verify_cognito_or_jwt accepts a Cognito token when its key ID
+matches a configured public key. The test mocks public-key lookup and JWT
+decoding, then checks the returned identity and the issuer, audience, and
+algorithm passed to the decoder.
+"""
+def test_verify_cognito_token_uses_matching_public_key(monkeypatch):
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="cognito-token")
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    monkeypatch.setattr(main, "get_cognito_public_keys", lambda: [{"kid": "key-1"}])
+    decode = MagicMock(
+        side_effect=[
+            {"iss": "https://cognito-idp.us-west-2.amazonaws.com/pool-123"},
+            {"sub": "cognito-user", "username": "reader"},
+        ]
+    )
+    monkeypatch.setattr(main.jwt, "get_unverified_header", lambda token: {"kid": "key-1"})
+    monkeypatch.setattr(main.jwt, "decode", decode)
 
-#     assert main.get_cognito_public_keys() == []
-#     assert "Failed to pull Cognito JWKS certificates" in caplog.text
+    result = asyncio.run(main.verify_cognito_or_jwt(credentials))
 
+    assert result == {
+        "identity_provider": "aws_cognito",
+        "user_id": "cognito-user",
+        "username": "reader",
+    }
+    assert decode.call_args.kwargs == {
+        "algorithms": ["RS256"],
+        "audience": "client-456",
+        "issuer": "https://cognito-idp.us-west-2.amazonaws.com/pool-123",
+    }
 
-# def test_verify_cognito_token_uses_matching_public_key(monkeypatch):
-#     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="cognito-token")
-#     monkeypatch.setenv("AWS_REGION", "us-west-2")
-#     monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
-#     monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
-#     monkeypatch.setattr(main, "get_cognito_public_keys", lambda: [{"kid": "key-1"}])
-#     decode = MagicMock(
-#         side_effect=[
-#             {"iss": "https://cognito-idp.us-west-2.amazonaws.com/pool-123"},
-#             {"sub": "cognito-user", "username": "reader"},
-#         ]
-#     )
-#     monkeypatch.setattr(main.jwt, "get_unverified_header", lambda token: {"kid": "key-1"})
-#     monkeypatch.setattr(main.jwt, "decode", decode)
+"""
+Tests that verify_cognito_or_jwt raises a 401 HTTPException when the token's
+key ID does not match any configured public key.
+"""
+def test_verify_cognito_token_rejects_unmatched_key(monkeypatch):
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="cognito-token")
+    monkeypatch.setenv("USE_COGNITO", "true")
+    monkeypatch.setattr(main, "get_cognito_public_keys", lambda: [{"kid": "other-key"}])
+    monkeypatch.setattr(main.jwt, "get_unverified_header", lambda token: {"kid": "missing-key"})
+    monkeypatch.setattr(main.jwt, "decode", lambda *args, **kwargs: {})
 
-#     result = asyncio.run(main.verify_cognito_or_jwt(credentials))
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(main.verify_cognito_or_jwt(credentials))
 
-#     assert result == {
-#         "identity_provider": "aws_cognito",
-#         "user_id": "cognito-user",
-#         "username": "reader",
-#     }
-#     assert decode.call_args.kwargs == {
-#         "algorithms": ["RS256"],
-#         "audience": "client-456",
-#         "issuer": "https://cognito-idp.us-west-2.amazonaws.com/pool-123",
-#     }
-
-
-# def test_verify_cognito_token_rejects_unmatched_key(monkeypatch):
-#     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="cognito-token")
-#     monkeypatch.setenv("USE_COGNITO", "true")
-#     monkeypatch.setattr(main, "get_cognito_public_keys", lambda: [{"kid": "other-key"}])
-#     monkeypatch.setattr(main.jwt, "get_unverified_header", lambda token: {"kid": "missing-key"})
-#     monkeypatch.setattr(main.jwt, "decode", lambda *args, **kwargs: {})
-
-#     with pytest.raises(HTTPException) as error:
-#         asyncio.run(main.verify_cognito_or_jwt(credentials))
-
-#     assert error.value.status_code == 401
-#     assert "Matching cloud validation certificate key not found" in error.value.detail
+    assert error.value.status_code == 401
+    assert "Matching cloud validation certificate key not found" in error.value.detail
 
 
 # def test_register_translates_unique_violation(monkeypatch):
