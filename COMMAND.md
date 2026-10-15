@@ -4,6 +4,26 @@ These instructions run the vanilla web app, FastAPI backend, and PostgreSQL
 database together with Docker Compose. From the repository root, this is the
 recommended way to run the app.
 
+## Copy the project to your own directory
+
+This copies the complete project folder, including hidden files, into a new
+folder in your home directory. It stops rather than merging with a destination
+folder that already exists:
+
+```bash
+test ! -e "$HOME/Digital-Library-System-copy" || {
+  printf 'Destination already exists: %s\n' "$HOME/Digital-Library-System-copy" >&2
+  exit 1
+}
+cp -a /home/grace/Digital-Library-System "$HOME/Digital-Library-System-copy"
+```
+
+To choose a different destination, replace both occurrences of
+`$HOME/Digital-Library-System-copy` with the directory you want. This is a full
+copy, so it also copies `.git`, local environment files such as `.env`, and
+installed dependencies such as `.venv` or `node_modules` if they exist. Keep
+the copied `.env` private; it may contain passwords and secret keys.
+
 ## One-time setup
 
 Open a terminal in the repository:

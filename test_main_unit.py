@@ -277,7 +277,12 @@ def test_get_jwt_secret_rejects_short_secrets(monkeypatch):
     with pytest.raises(RuntimeError, match="at least 32 characters"):
         main.get_jwt_secret()
 
-
+"""
+This is going test the verify cognito or jwt accept native token using monkeypatch. It's going to set the JWT_SECRET_KEY value to the TOKEN_SECRET variable name. 
+The token variable is going to create an access token with a user id of 7 and the permissions as reader. The reader is going to specifically indicate read
+permissions. The credentials variable is going to hold the HTTPAuthorizationCredentials with the scheme being "bearer" and
+the credentials being the token variable.
+"""
 def test_verify_cognito_or_jwt_accepts_native_token(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", TOKEN_SECRET)
     token = main.create_access_token(7, "reader")
@@ -291,14 +296,22 @@ def test_verify_cognito_or_jwt_accepts_native_token(monkeypatch):
         "username": "reader",
     }
 
-
+"""
+This function is going to test the verification of Cognito or the JWT that would require credentials. 
+The with block is going to raise an exception as an error. It's going to then assert the error 
+with a status code of 401. 
+"""
 def test_verify_cognito_or_jwt_requires_credentials():
     with pytest.raises(HTTPException) as error:
         asyncio.run(main.verify_cognito_or_jwt(None))
 
     assert error.value.status_code == 401
 
-
+"""
+THis function is going to get the current user and return the database for the user.
+The monkeypatch is going to set the environment variables of "JWT_SECRET_KEY" to the 
+TOKEN_KEY variable.
+"""
 def test_get_current_user_returns_database_user(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", TOKEN_SECRET)
     token = main.create_access_token(7, "reader")
