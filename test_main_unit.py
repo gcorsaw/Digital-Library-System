@@ -334,9 +334,11 @@ def test_get_current_user_rejects_invalid_token():
 
     assert error.value.status_code == 401
 
-# A correctly signed token is not sufficient on its own: the token's user ID
-# must also match a database record. Return no row to verify the request fails
-# with HTTP 401 when that account does not exist.
+"""
+A correctly signed token is not sufficient on its own: the token's user ID
+must also match a database record. Return no row to verify the request fails
+with HTTP 401 when that account does not exist.
+"""
 def test_get_current_user_rejects_unknown_user(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", TOKEN_SECRET)
     token = main.create_access_token(7, "reader")
@@ -349,7 +351,9 @@ def test_get_current_user_rejects_unknown_user(monkeypatch):
 
     assert error.value.status_code == 401
 
-
+"""
+This function is going to register the password hashes and return the associated token for that password. 
+"""
 def test_register_hashes_password_and_returns_token(monkeypatch):
     cursor = MagicMock()
     cursor.fetchone.return_value = USER
