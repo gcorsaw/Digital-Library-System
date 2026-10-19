@@ -307,11 +307,9 @@ def test_verify_cognito_or_jwt_requires_credentials():
 
     assert error.value.status_code == 401
 
-"""
-THis function is going to get the current user and return the database for the user.
-The monkeypatch is going to set the environment variables of "JWT_SECRET_KEY" to the 
-TOKEN_KEY variable.
-"""
+# Use a valid signed token and a matching database row to verify that the user
+# lookup returns the database record. The schema activation is mocked so this
+# unit test does not create or change a PostgreSQL schema.
 def test_get_current_user_returns_database_user(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", TOKEN_SECRET)
     token = main.create_access_token(7, "reader")
@@ -326,7 +324,8 @@ def test_get_current_user_returns_database_user(monkeypatch):
     cursor.execute.assert_called_once()
     assert cursor.execute.call_args.args[1] == (7,)
 
-
+# An invalid bearer token cannot be decoded as a valid JWT, so the request must
+# fail with HTTP 401 rather than returning an authenticated user.
 def test_get_current_user_rejects_invalid_token():
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="invalid")
 
@@ -335,7 +334,9 @@ def test_get_current_user_rejects_invalid_token():
 
     assert error.value.status_code == 401
 
-
+# A correctly signed token is not sufficient on its own: the token's user ID
+# must also match a database record. Return no row to verify the request fails
+# with HTTP 401 when that account does not exist.
 def test_get_current_user_rejects_unknown_user(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", TOKEN_SECRET)
     token = main.create_access_token(7, "reader")

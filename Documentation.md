@@ -278,3 +278,7 @@
 
 * __Friday (10-16-2026)__
     * I had a meeting with my supervisor at 2:30 pm. My supervisor and I talked about what occurred this week and what I plan on working on the next week. I intedn on working on Cognito, Kubernetes, and deploying to the pipeline. If I am able to deploy to the pipeline for the project, that would be great, but it would be great if I can do that. 
+
+* __Monday (10-19-2026)__
+    * The first task that I did was to continue to write some more comments for my unit tests in my testing file as well. I found it interesting that some of the functions are built similarly with different styles that have slight variants and share similar styles of testing. The second task that I'm going to try and work on deploying Cognito or having it deploy down a pipeline or I may try and work on creating mor edoucmentation for the unit test functions.
+    * In the second work block, I worked on getting my Kubernetes set up and I have some .yaml files that contain the initial set up for the Kubernetes. I also worked on adding more documentation to my Unit Testing file. I had a little bit of a harder time with my Kubernetes file because my writing for Kubernetes was a bit rusty compared to when I was doing it consistently from the Summer 2026 Semester. The next work block that I intend on working on I plan on working on writing some more documentation for my Unit testing file. 
