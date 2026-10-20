@@ -24,6 +24,7 @@ from argon2.exceptions import VerificationError, InvalidHashError
 _COGNITO_JWKS = None
 
 def load_db_config():
+    """Collect database connection settings, using local-development defaults."""
     # Fallback to local development credentials if variables aren't set yet
     return {
         "host": os.getenv("DB_HOST", "localhost"),
@@ -34,6 +35,7 @@ def load_db_config():
     }
 
 def get_cognito_public_keys():
+    """Fetch and cache the Cognito JWKS keys used to verify access tokens."""
     global _COGNITO_JWKS
     if _COGNITO_JWKS is None:
         region = os.getenv("AWS_REGION", "us-east-1")
@@ -55,6 +57,7 @@ except ImportError:
     pass
 
 def get_env(env_name):
+    """Read a required environment setting, defaulting DB_PORT for local use."""
     env_value = os.environ.get(env_name)
     if env_value is not None:
         env_value = env_value.strip()
@@ -69,9 +72,11 @@ def get_env(env_name):
 
 class DatabaseManager:
     def __init__(self):
+        """Create a manager whose connection pool is initialized on demand."""
         self._pool = None
 
     def initialize_pool(self) -> None:
+        """Create the shared PostgreSQL connection pool if it is not initialized."""
         if self._pool is not None:
             return
         try:
@@ -89,15 +94,18 @@ class DatabaseManager:
             raise error
 
     def get_conn(self):
+        """Return a pooled connection, initializing the pool when necessary."""
         if not self._pool:
             self.initialize_pool()
         return self._pool.getconn()
 
     def release_conn(self, conn):
+        """Return a checked-out connection to the pool when both are available."""
         if self._pool and conn:
             self._pool.putconn(conn)
 
     def close_pool(self) -> None:
+        """Close all pooled connections and reset the manager to an uninitialized state."""
         if self._pool:
             self._pool.closeall()
             self._pool = None
@@ -107,6 +115,7 @@ USER_SCHEMA_FILE = Path(__file__).with_name("user-schema.sql")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Initialize the database pool on startup and close it during shutdown."""
     db_manager.initialize_pool()
     yield
     db_manager.close_pool()
@@ -138,6 +147,7 @@ library_app.add_middleware(
 )
 
 def get_db_cursor() -> Generator[RealDictCursor, None, None]:
+    """Yield a dictionary cursor and commit or roll back its request transaction."""
     connection = db_manager.get_conn()
     cursor = connection.cursor(cursor_factory=RealDictCursor)
     try:
@@ -151,6 +161,7 @@ def get_db_cursor() -> Generator[RealDictCursor, None, None]:
         db_manager.release_conn(connection)
 
 def activate_user_schema(cursor: RealDictCursor, user_id: int) -> None:
+    """Create and select a user's schema, applying its tables on first use."""
     schema_name = f"library_user_{int(user_id)}"
     cursor.execute("SELECT pg_advisory_xact_lock(%s);", (int(user_id),))
     cursor.execute(
@@ -190,6 +201,7 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # HEALTH ENDPOINT: Added for infrastructure target group status checks
 @library_app.get("/health", status_code=status.HTTP_200_OK, tags=["System Health"])
 async def health_check():
+    """Return the basic health payload used by deployment probes."""
     return {
         "status": "healthy",
         "environment": os.getenv("APP_ENV", "production"),
@@ -197,12 +209,14 @@ async def health_check():
     }
 
 def get_jwt_secret() -> str:
+    """Return the configured JWT signing key, rejecting missing or short values."""
     secret = os.environ.get("JWT_SECRET_KEY", "").strip()
     if len(secret) < 32:
         raise RuntimeError("JWT_SECRET_KEY must be set to a random string of at least 32 characters")
     return secret
 
 def create_access_token(user_id: int, username: str) -> str:
+    """Sign a native bearer token with the user's ID and configured expiration."""
     now = datetime.now(timezone.utc)
     minutes = int(os.environ.get("JWT_EXPIRE_MINUTES", "60"))
     payload = {
@@ -215,6 +229,7 @@ def create_access_token(user_id: int, username: str) -> str:
 
 # COGNITO INTEGRATION: Token cross-verification mechanism routing securely
 async def verify_cognito_or_jwt(credentials: HTTPAuthorizationCredentials = Depends(security_agent)):
+    """Validate a Cognito or native JWT and return its provider and user identity."""
     if not credentials:
         raise HTTPException(status_code=401, detail="Please log in to continue.")
     token = credentials.credentials
@@ -260,6 +275,7 @@ class RegisterRequest(BaseModel):
     @field_validator("username")
     @classmethod
     def check_username(cls, value: str) -> str:
+        """Trim and validate a username against the allowed characters and length."""
         value = value.strip()
         if not USERNAME_RE.match(value):
             raise ValueError("Username must be 3-30 characters: letters, numbers, . _ -")
@@ -268,6 +284,7 @@ class RegisterRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def check_email(cls, value: str) -> str:
+        """Trim and validate the email address and its maximum length."""
         value = value.strip()
         if len(value) > 254 or not EMAIL_RE.match(value):
             raise ValueError("Enter a valid email address")
@@ -281,6 +298,7 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security_agent),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ) -> dict:
+    """Authenticate a native JWT, load its user, and activate that user's schema."""
     unauthorized = HTTPException(
         status_code=401,
         detail="Please log in to continue.",
@@ -310,6 +328,7 @@ def get_current_user(
 
 @library_app.post("/auth/register", status_code=status.HTTP_201_CREATED)
 def register(body: RegisterRequest, cursor: RealDictCursor = Depends(get_db_cursor)):
+    """Create an account, initialize its schema, and return a bearer token."""
     try:
         cursor.execute(
             """
@@ -331,6 +350,7 @@ def register(body: RegisterRequest, cursor: RealDictCursor = Depends(get_db_curs
 
 @library_app.post("/auth/login")
 def login(body: LoginRequest, cursor: RealDictCursor = Depends(get_db_cursor)):
+    """Authenticate by username or email and return a bearer token on success."""
     identifier = body.username.strip()
     cursor.execute(
         """
@@ -356,9 +376,11 @@ def login(body: LoginRequest, cursor: RealDictCursor = Depends(get_db_cursor)):
 
 @library_app.get("/auth/me")
 def read_me(user: dict = Depends(get_current_user)):
+    """Return the authenticated user's public account details."""
     return {"user": user}
 
 def connect():
+    """Open a direct database connection, print its version, and close it."""
     connection = None
     try:
         connection = psycopg2.connect(
@@ -392,6 +414,7 @@ class Book(BaseModel):
 
     @model_validator(mode="after")
     def validate_book_data(self):
+        """Normalize book text and enforce identifier and author-field pairing."""
         self.book_title = self.book_title.strip()
         self.book_isbn = self.book_isbn.strip() if self.book_isbn else None
         self.internal_code = self.internal_code.strip() if self.internal_code else None
@@ -417,6 +440,7 @@ class Book_Description_Update(BaseModel):
 
 @library_app.get("/")
 def read_root():
+    """Return a basic response from the API root endpoint."""
     return {"message": "Hello World"}
 
 @library_app.get("/books")
@@ -424,6 +448,7 @@ def get_books(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """List the authenticated user's tracked books with status and summary."""
     try:
         cursor.execute(
             """
@@ -444,6 +469,7 @@ def get_book_summaries_from_database(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Return book IDs and titles from the active user's book catalog."""
     try:
         cursor.execute("SELECT book_id, book_title FROM book_info;")
         details_query = cursor.fetchall()
@@ -456,6 +482,7 @@ def get_details_from_database(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Return complete book records from the active user's catalog."""
     try:
         cursor.execute("SELECT * FROM book_info;")
         info_query = cursor.fetchall()
@@ -469,6 +496,7 @@ def user_add_book(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Find or create a catalog book, then add it to the user's library."""
     try:
         cursor.execute(
             """
@@ -526,6 +554,7 @@ def search_title_by_word(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Search the active catalog for titles containing the supplied text."""
     if not title or not title.strip():
         raise HTTPException(status_code=400, detail="Title is required")
     title = title.strip()
@@ -552,6 +581,7 @@ def description_removal(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Clear a book's user-specific summary and return the updated record."""
     try:
         cursor.execute(
             """
@@ -578,6 +608,7 @@ def delete_book_by_id(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Remove a book from the user's library without deleting its catalog record."""
     try:
         cursor.execute(
             """
@@ -604,6 +635,7 @@ def description_change_by_id(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Update a tracked book's user-specific summary by book ID."""
     try:
         cursor.execute(
             """
@@ -630,6 +662,7 @@ def delete_book_endpoint(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Remove the case-insensitive title match from the user's library."""
     try:
         cursor.execute(
             """
@@ -661,6 +694,7 @@ def description_change(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Update a tracked book's user-specific summary by title."""
     try:
         cursor.execute(
             """
@@ -687,6 +721,7 @@ def search_books_by_media_type(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Find catalog books whose media type contains the supplied text."""
     if not media_type or not media_type.strip():
         raise HTTPException(status_code=400, detail="Media type is required")
     media_type = media_type.strip()
@@ -710,6 +745,7 @@ def search_books_by_book_genre(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Find catalog books whose genre contains the supplied text."""
     if not genre or not genre.strip():
         raise HTTPException(status_code=400, detail="Book genre is required")
     book_genre = genre.strip()
@@ -733,6 +769,7 @@ def search_books_by_author(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Find catalog books whose author's full name contains the supplied text."""
     if not author or not author.strip():
         raise HTTPException(status_code=400, detail="Author name is required")
     author_name = author.strip()
@@ -758,6 +795,7 @@ def get_comic_book_from_database(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Search book titles and include any matching genre and media type details."""
     if not comic or not comic.strip():
         raise HTTPException(status_code=400, detail="Comic book title is required")
     comic_book = comic.strip()
@@ -784,6 +822,7 @@ def search_books_by_pages(
     cursor: RealDictCursor = Depends(get_db_cursor),
     user: dict = Depends(get_current_user),
 ):
+    """Find books within the optional inclusive page-count bounds."""
     if min_pages is None and max_pages is None:
         raise HTTPException(status_code=400, detail="Provide min_pages, max_pages, or both")
     if min_pages is not None and max_pages is not None and min_pages > max_pages:
@@ -808,6 +847,7 @@ def get_book_details(
     cursor: RealDictCursor = Depends(get_db_cursor),
     user: dict = Depends(get_current_user),
 ):
+    """Return one catalog book with its first associated author ID, if present."""
     try:
         cursor.execute(
             """
@@ -834,6 +874,7 @@ def get_book_details(
         raise HTTPException(status_code=500, detail=str(e))
 
 def get_book_database():
+    """Print and return all book records using a pooled database connection."""
     connection = db_manager.get_conn()
     try:
         cursor = connection.cursor(cursor_factory=RealDictCursor)
@@ -851,6 +892,7 @@ def get_book_database():
         db_manager.release_conn(connection)
 
 def add_multiple_authors():
+    """Return authors ordered by name and ID using a pooled connection."""
     connection = db_manager.get_conn()
     try:
         with connection.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -860,6 +902,7 @@ def add_multiple_authors():
         db_manager.release_conn(connection)
 
 def search_all_games():
+    """Return all game records ordered by title using a pooled connection."""
     connection = db_manager.get_conn()
     try:
         with connection.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -880,6 +923,7 @@ class Game(BaseModel):
 
     @model_validator(mode="after")
     def validate_game_data(self):
+        """Normalize optional game text and validate its title and player range."""
         self.game_title = self.game_title.strip()
         self.publisher = self.publisher.strip() if self.publisher else None
         self.game_description = self.game_description.strip() if self.game_description else None
@@ -895,6 +939,7 @@ def add_game(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Find or create a game record, then add it to the user's tracked games."""
     try:
         cursor.execute("SELECT * FROM game_info WHERE game_title = %s;", (game.game_title,))
         new_game = cursor.fetchone()
@@ -937,6 +982,7 @@ def get_all_games(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """List the authenticated user's tracked games and personal status or notes."""
     try:
         cursor.execute(
             """
@@ -958,6 +1004,7 @@ def delete_game_endpoint(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Remove a case-insensitive title match from the user's tracked games."""
     try:
         cursor.execute(
             """
@@ -989,6 +1036,7 @@ class BookProgressUpdate(BaseModel):
     @field_validator("read_status")
     @classmethod
     def validate_status(cls, v: str) -> str:
+        """Normalize read status and restrict it to the supported values."""
         clean_v = v.strip().lower()
         if clean_v not in ("read", "want to read"):
             raise ValueError("read_status must be exactly 'read' or 'want to read'")
@@ -1001,6 +1049,7 @@ def update_book_progress_by_title(
     user: dict = Depends(get_current_user),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ):
+    """Update a tracked book's read status and optional rating by title."""
     try:
         cursor.execute(
             """
@@ -1029,6 +1078,7 @@ def update_book_progress_by_title(
         raise HTTPException(status_code=500, detail=f"Progress sync failed: {str(e)}")
 
 def main():
+    """Run a best-effort database check, initialize the pool, and start the API."""
     print("Hello from digital-library-system!")
     try:
         get_book_database()

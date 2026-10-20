@@ -13,6 +13,7 @@ load_dotenv()
 CSV_FILE = Path(__file__).with_name("test_data.csv")
 
 def get_env(env_name, default=None):
+    """Read a required environment setting, using the supplied or DB port default."""
     val = os.environ.get(env_name, default)
     if val is not None:
         val = val.strip()
@@ -72,6 +73,7 @@ def parse_csv_to_jsonb_payload(file_path: Path) -> str:
     return json.dumps(catalog_payload)
 
 def trigger_database_bulk_ingest():
+    """Load the CSV catalog and pass it to the database's bulk-ingest function."""
     print("[*] Parsing CSV records into structured JSON array mapping...")
     json_payload = parse_csv_to_jsonb_payload(CSV_FILE)
     

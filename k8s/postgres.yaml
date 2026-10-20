@@ -1,3 +1,5 @@
+# Provides a stable network identity for the database StatefulSet. This
+# headless Service resolves directly to its selected Pods.
 apiVersion: v1
 kind: Service
 metadata:
@@ -10,13 +12,18 @@ spec:
     - port: 5432
       targetPort: 5432
 ---
+# Runs PostgreSQL as a StatefulSet so its Pod identity and storage are stable.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: postgres
 spec:
+  # The StatefulSet uses the Service above for stable network identity.
   serviceName: postgres
+  # One database instance is configured; scaling this StatefulSet alone does
+  # not provide database replication or high availability.
   replicas: 1
+  # Match this label against the Pod template so the StatefulSet manages its Pod.
   selector:
     matchLabels:
       app: postgres
@@ -27,9 +34,12 @@ spec:
     spec:
       containers:
         - name: postgres
+          # PostgreSQL container image and major version.
           image: postgres:16
+          # PostgreSQL accepts database connections on port 5432.
           ports:
             - containerPort: 5432
+          # Initialize the database name and credentials from the library Secret.
           env:
             - name: POSTGRES_DB
               value: digital_library
@@ -45,15 +55,18 @@ spec:
                   key: DB_PASSWORD
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
+          # Persist database files so they survive replacement of the Pod.
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
+          # Report ready only after PostgreSQL accepts connections to this DB.
           readinessProbe:
             exec:
               command:
                 - sh
                 - -c
                 - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+          # Requests inform scheduling; limits cap CPU and memory consumption.
           resources:
             requests:
               cpu: 100m
@@ -61,6 +74,8 @@ spec:
             limits:
               cpu: 500m
               memory: 1Gi
+  # Provision persistent storage for the StatefulSet Pod. The requested size
+  # and access mode must be supported by the cluster's storage provisioner.
   volumeClaimTemplates:
     - metadata:
         name: postgres-data

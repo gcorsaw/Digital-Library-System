@@ -1,9 +1,15 @@
+# Runs and maintains the frontend Pods. Kubernetes replaces failed Pods and
+# keeps the number of running replicas aligned with the value below.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: frontend
 spec:
+  # One replica is adequate for this setup; additional replicas can provide
+  # more capacity and availability.
   replicas: 1
+  # This selector must match the Pod template label so the Deployment can
+  # identify and manage the Pods it creates.
   selector:
     matchLabels:
       app: frontend
@@ -14,14 +20,21 @@ spec:
     spec:
       containers:
         - name: frontend
+          # The frontend image built for this environment. If it is not
+          # available on a node, Kubernetes can attempt to pull it.
           image: digital-library-frontend:local
           imagePullPolicy: IfNotPresent
+          # The frontend serves HTTP traffic on port 80 inside the Pod.
           ports:
             - containerPort: 80
+          # Keep the Pod out of Service endpoints until its HTTP endpoint
+          # responds successfully.
           readinessProbe:
             httpGet:
               path: /
               port: 80
+          # Requests guide scheduling; limits cap the container's CPU and
+          # memory consumption.
           resources:
             requests:
               cpu: 50m
@@ -30,6 +43,9 @@ spec:
               cpu: 250m
               memory: 128Mi
 ---
+# Creates an in-cluster endpoint for the frontend Pods. The selector routes
+# Service traffic to Pods labeled app=frontend; port 8081 is forwarded to
+# port 80, where the frontend container serves HTTP.
 apiVersion: v1
 kind: Service
 metadata:
