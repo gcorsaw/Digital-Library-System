@@ -285,4 +285,4 @@
 
 * __Tuesday (10-20-2026)__
     * The first task that I worked on was testing the files that contain the Kubernetes. There were some errors that I encountered, but those problems were able to be resolved. The other portion that I worked on some research for some of my Kubernetes files. I also intend on working on adding some more documentation for the files and I'll also add some more documentation to my Unit testing file as well. I think that it's oing to be interesting to see what kind of information I'm going to be able to find and what sort of documentation/comments I am going to be able to write.
-    * The second task that 
+    * The second task that I worked on adding more comments to my testing file and the Kubernetes files that I have been working on. I thought that the interesting because there were some things that I hadn't learned about in any or my prior classes.
