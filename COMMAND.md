@@ -140,6 +140,142 @@ Start it again later:
 docker compose up -d
 ```
 
+## Run on Kubernetes with Kustomize
+
+These commands deploy the manifests in `k8s/` instead of using Docker Compose.
+You need Docker, a Kubernetes cluster, and `kubectl` configured for that
+cluster. `kubectl` includes Kustomize support, so installing the separate
+`kustomize` command is optional. Run the commands from the repository root.
+
+If your terminal is currently in the `k8s/` directory, return to the
+repository root first:
+
+```bash
+cd ..
+```
+
+Check that `kubectl` can reach the intended cluster:
+
+```bash
+kubectl config current-context
+kubectl cluster-info
+```
+
+Build the container images used by the manifests:
+
+```bash
+docker build -f Dockerfile.backend -t digital-library-backend:local .
+docker build -f Dockerfile.frontend -t digital-library-frontend:local .
+```
+
+Make the images available to your cluster. For `kind`:
+
+```bash
+kind load docker-image digital-library-backend:local digital-library-frontend:local
+```
+
+For Minikube:
+
+```bash
+minikube image load digital-library-backend:local
+minikube image load digital-library-frontend:local
+```
+
+Docker Desktop Kubernetes can generally use images built by its Docker engine.
+For other cluster types, follow that provider's instructions for loading or
+publishing images.
+
+The backend and PostgreSQL manifests require a Kubernetes Secret. Supply your
+own database credentials and generate a private JWT secret of at least 32
+characters. This command creates a 64-character random JWT secret without
+printing it; do not commit real credentials:
+
+```bash
+kubectl create secret generic library-secrets \
+  --from-literal=DB_USER='<database-user>' \
+  --from-literal=DB_PASSWORD='<database-password>' \
+  --from-literal=JWT_SECRET_KEY="$(openssl rand -hex 32)"
+```
+
+Render the resources first if you want to inspect the generated Kubernetes
+configuration:
+
+```bash
+kubectl kustomize k8s/
+```
+
+Apply the resources:
+
+```bash
+kubectl apply -k k8s/
+```
+
+Check the resources and wait for the workloads to become ready:
+
+```bash
+kubectl get pods,services,persistentvolumeclaims
+kubectl rollout status deployment/backend
+kubectl rollout status deployment/frontend
+kubectl rollout status statefulset/postgres
+```
+
+### Initialize the PostgreSQL schema
+
+The Kubernetes PostgreSQL manifest does not automatically load the project's
+SQL initialization script. For a new, empty database, initialize it after
+PostgreSQL is ready:
+
+```bash
+kubectl exec -i statefulset/postgres -- sh -c \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+  < digital-library-system.sql
+```
+
+**Warning:** `digital-library-system.sql` drops and recreates application
+tables and adds sample data. Run it only against a new database or when you
+intentionally want to reset those tables. Do not rerun it on a database
+containing data you need to keep.
+
+### Fix or rotate the JWT secret
+
+If registration fails with an error saying `JWT_SECRET_KEY` must be at least
+32 characters, update the existing Secret with a newly generated key and
+restart the backend:
+
+```bash
+kubectl patch secret library-secrets --type=merge \
+  -p "{\"stringData\":{\"JWT_SECRET_KEY\":\"$(openssl rand -hex 32)\"}}"
+kubectl rollout restart deployment/backend
+kubectl rollout status deployment/backend
+```
+
+Rotating this key invalidates existing login tokens; users will need to log in
+again.
+
+The frontend Service listens on port 8081 and forwards traffic to the
+container's port 80. Forward it to port 8081 on your computer:
+
+```bash
+kubectl port-forward service/frontend 8081:8081
+```
+
+Keep that command running while using the app at
+<http://localhost:8081>. Press Ctrl+C to stop port forwarding.
+
+To remove the deployed resources later:
+
+```bash
+kubectl delete -k k8s/
+```
+
+Deleting the manifests does not necessarily delete PostgreSQL's persistent
+volume claim or its data. Delete the claim only if you intentionally want to
+erase that data:
+
+```bash
+kubectl delete persistentvolumeclaim postgres-data-postgres-0
+```
+
 ## GitHub branch, pull, merge, and push commands
 
 Run these from the repository root. Replace `main` with the repository's

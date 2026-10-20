@@ -1,3 +1,12 @@
+# The apiVersion is going to identify the Kustomization file's API
+# format. The Kustomize version is going to come from the kustomize CLI or the version
+# bundled with kubectl. The kind is going to be the standard declarion that is
+# going to be used inside this file to identify the document as a Kustomize
+# build configuration. The resources field is an array used to specify the initial
+# set of Kubernetes manifests or other Kustomize bases that Kustomize should read,
+# process, and manage. In this case, the resources are going to specify
+# the frontend.yaml, backend.yaml, and postgres.yaml to be manifested and these
+# files are going to be read, processed, and managed. 
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
