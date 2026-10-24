@@ -4,6 +4,10 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 # Include each application component in the Kustomize build.
+# The resources are going to define the initial set of Kubernetes manifests
+# that Kustomize should pull into its build process. It acts as an explict
+# entry point list, instructing Kustomize which specify files, directories,
+# or remote paths to process and apply transformations to.
 resources:
   - frontend.yaml
   - backend.yaml

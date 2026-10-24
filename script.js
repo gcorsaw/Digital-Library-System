@@ -114,32 +114,89 @@ function syncAuthState() {
   }
 }
 
+async function postAuthRequest(path, payload, fallbackMessage) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(formatAuthError(data.detail, fallbackMessage));
+  }
+  return data;
+}
+
+function saveAuthSession(data, username) {
+  if (!data.access_token) {
+    throw new Error("The authentication service did not return an access token.");
+  }
+  localStorage.setItem("library_auth_token", data.access_token);
+  localStorage.setItem("library_username", username);
+  currentAuthToken = data.access_token;
+  currentUsername = username;
+  syncAuthState();
+}
+
 if (signupBtn) {
   signupBtn.addEventListener("click", async () => {
-    const username = prompt("Choose a username (3-30 chars):");
-    if (!username) return;
-    const email = prompt("Enter your email address:");
-    if (!email) return;
-    const password = prompt("Choose a password (min 8 chars):");
-    if (!password) return;
-
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, email, password })
-      });
-      
-      const data = await res.json();
-      if (!res.ok) throw new Error(formatAuthError(data.detail, "Registration failed"));
+      const provider = prompt("Create account with 1) Local account or 2) Amazon Cognito? Enter 1 or 2:");
+      if (!provider) return;
 
-      localStorage.setItem("library_auth_token", data.access_token);
-      localStorage.setItem("library_username", data.user.username);
-      currentAuthToken = data.access_token;
-      currentUsername = data.user.username;
-      
+      if (provider.trim() === "2") {
+        const email = prompt("Enter your email address for Cognito:");
+        if (!email) return;
+        const password = prompt("Choose a password (at least 8 characters):");
+        if (!password) return;
+
+        const registration = await postAuthRequest(
+          "/auth/cognito/register",
+          { email, password },
+          "Cognito registration failed"
+        );
+        const confirmationCode = prompt(
+          `${registration.message}\nEnter the confirmation code from your email:`
+        );
+        if (!confirmationCode) {
+          alert("Your account was created. Confirm the email before signing in with Cognito.");
+          return;
+        }
+
+        await postAuthRequest(
+          "/auth/cognito/confirm",
+          { email, confirmation_code: confirmationCode },
+          "Cognito email confirmation failed"
+        );
+        const tokenData = await postAuthRequest(
+          "/auth/cognito/login",
+          { email, password },
+          "Cognito sign-in failed"
+        );
+        saveAuthSession(tokenData, email);
+        alert(`Welcome to your digital library, ${email}! Your Cognito account is ready.`);
+        return;
+      }
+
+      if (provider.trim() !== "1") {
+        alert("Choose 1 for a local account or 2 for Amazon Cognito.");
+        return;
+      }
+
+      const username = prompt("Choose a username (3-30 chars):");
+      if (!username) return;
+      const email = prompt("Enter your email address:");
+      if (!email) return;
+      const password = prompt("Choose a password (min 8 chars):");
+      if (!password) return;
+
+      const data = await postAuthRequest(
+        "/auth/register",
+        { username, email, password },
+        "Registration failed"
+      );
+      saveAuthSession(data, data.user.username);
       alert(`Welcome to your digital library, ${currentUsername}! Account created successfully.`);
-      syncAuthState();
     } catch (err) {
       alert(`Registration Error: ${err instanceof Error ? err.message : "An unexpected error occurred."}`);
     }
@@ -152,30 +209,37 @@ loginBtn.addEventListener("click", async () => {
     if (resultsSection) resultsSection.hidden = true;
     if (collectionView) collectionView.hidden = true;
   } else {
-    const usernameOrEmail = prompt("Enter your username or email:");
+    const provider = prompt("Sign in with 1) Local account or 2) Amazon Cognito? Enter 1 or 2:");
+    if (!provider) return;
+    if (provider.trim() !== "1" && provider.trim() !== "2") {
+      alert("Choose 1 for a local account or 2 for Amazon Cognito.");
+      return;
+    }
+
+    const isCognito = provider.trim() === "2";
+    const usernameOrEmail = prompt(isCognito
+      ? "Enter your Cognito email address:"
+      : "Enter your username or email:");
     if (!usernameOrEmail) return;
     const password = prompt("Enter your password:");
     if (!password) return;
 
     loginLabel.textContent = "Connecting...";
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: usernameOrEmail, password: password })
-      });
-      
-      const data = await res.json();
-      if (!res.ok) throw new Error(formatAuthError(data.detail, "Login failed"));
-
-      localStorage.setItem("library_auth_token", data.access_token);
-      localStorage.setItem("library_username", data.user.username);
-      currentAuthToken = data.access_token;
-      currentUsername = data.user.username;
-      
-      syncAuthState();
+      const data = isCognito
+        ? await postAuthRequest(
+          "/auth/cognito/login",
+          { email: usernameOrEmail, password },
+          "Cognito sign-in failed"
+        )
+        : await postAuthRequest(
+          "/auth/login",
+          { username: usernameOrEmail, password },
+          "Login failed"
+        );
+      saveAuthSession(data, isCognito ? usernameOrEmail : data.user.username);
     } catch (err) {
-      alert(`Login Failed: ${err.message}`);
+      alert(`Login Failed: ${err instanceof Error ? err.message : "An unexpected error occurred."}`);
       syncAuthState();
     }
   }

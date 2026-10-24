@@ -1,20 +1,83 @@
 <main class="app-shell">
   <h1>{{ title }}</h1>
 
-  <p *ngIf="loading">Loading books...</p>
-  <p *ngIf="error" class="error">{{ error }}</p>
+  <section *ngIf="!authenticated" class="auth-panel">
+    <h2>Sign in to your library</h2>
 
-  <section *ngIf="!loading && !error">
-    <h2>Available Books</h2>
-    <ul *ngIf="books.length; else emptyState">
+    <label for="auth-mode">Authentication</label>
+    <select id="auth-mode" [(ngModel)]="authMode" name="authMode" (change)="registering = false; needsConfirmation = false">
+      <option value="native">Local account</option>
+      <option value="cognito">Amazon Cognito</option>
+    </select>
+
+    <form *ngIf="!needsConfirmation" (ngSubmit)="submitAuthentication()">
+      <label *ngIf="authMode === 'native' && registering" for="username">Username</label>
+      <input
+        *ngIf="authMode === 'native' && registering"
+        id="username"
+        name="username"
+        [(ngModel)]="username"
+        autocomplete="username"
+        required
+      />
+
+      <label for="email">Email{{ authMode === 'native' && !registering ? ' or username' : '' }}</label>
+      <input
+        id="email"
+        name="email"
+        [(ngModel)]="email"
+        [type]="authMode === 'native' && !registering ? 'text' : 'email'"
+        [autocomplete]="registering ? 'email' : 'username'"
+        required
+      />
+
+      <label for="password">Password</label>
+      <input
+        id="password"
+        name="password"
+        type="password"
+        [(ngModel)]="password"
+        [autocomplete]="registering ? 'new-password' : 'current-password'"
+        required
+        minlength="8"
+      />
+
+      <button type="submit" [disabled]="busy">
+        {{ busy ? 'Please wait...' : registering ? 'Create account' : 'Sign in' }}
+      </button>
+    </form>
+
+    <form *ngIf="needsConfirmation" (ngSubmit)="confirmCognitoAccount()">
+      <p>Enter the confirmation code sent to {{ email }}.</p>
+      <label for="confirmation-code">Confirmation code</label>
+      <input
+        id="confirmation-code"
+        name="confirmationCode"
+        [(ngModel)]="confirmationCode"
+        autocomplete="one-time-code"
+        required
+      />
+      <button type="submit" [disabled]="busy">{{ busy ? 'Please wait...' : 'Confirm email' }}</button>
+    </form>
+
+    <button *ngIf="!needsConfirmation" type="button" class="link-button" (click)="registering = !registering">
+      {{ registering ? 'Already have an account? Sign in' : 'Create an account' }}
+    </button>
+  </section>
+
+  <p *ngIf="message" role="status">{{ message }}</p>
+  <p *ngIf="error" class="error" role="alert">{{ error }}</p>
+
+  <section *ngIf="authenticated">
+    <button type="button" (click)="signOut()">Sign out</button>
+    <p *ngIf="loading">Loading books...</p>
+    <h2 *ngIf="!loading">Available Books</h2>
+    <ul *ngIf="!loading && books.length">
       <li *ngFor="let book of books">
         {{ book['book_title'] ?? book['title'] ?? 'Untitled book' }}
       </li>
     </ul>
-
-    <ng-template #emptyState>
-      <p>No books were returned by the API.</p>
-    </ng-template>
+    <p *ngIf="!loading && !books.length">No books were returned by the API.</p>
   </section>
 </main>
 

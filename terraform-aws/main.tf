@@ -5,13 +5,21 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 5.92"
     }
   }
 }
 
 provider "aws" {
   region = var.aws_region
+}
+
+data "aws_cloudfront_cache_policy" "api_caching_disabled" {
+  name = "Managed-CachingDisabled"
+}
+
+data "aws_cloudfront_origin_request_policy" "api_forward_viewer_except_host" {
+  name = "Managed-AllViewerExceptHostHeader"
 }
 
 # ==========================================
@@ -31,16 +39,16 @@ resource "aws_internet_gateway" "gw" {
 }
 
 resource "aws_subnet" "public_a" {
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = "10.0.1.0/24"
-  availability_zone = "${var.aws_region}a"
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = "${var.aws_region}a"
   map_public_ip_on_launch = true
 }
 
 resource "aws_subnet" "public_b" {
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = "10.0.2.0/24"
-  availability_zone = "${var.aws_region}b"
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.2.0/24"
+  availability_zone       = "${var.aws_region}b"
   map_public_ip_on_launch = true
 }
 
@@ -74,6 +82,13 @@ resource "aws_security_group" "lb_sg" {
   ingress {
     from_port   = 80
     to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -121,6 +136,44 @@ resource "aws_lb_listener" "http_entry" {
   protocol          = "HTTP"
 
   default_action {
+    type = var.api_certificate_arn == null ? "fixed-response" : "redirect"
+
+    dynamic "redirect" {
+      for_each = var.api_certificate_arn == null ? [] : [true]
+      content {
+        port        = "443"
+        protocol    = "HTTPS"
+        status_code = "HTTP_301"
+      }
+    }
+
+    dynamic "fixed_response" {
+      for_each = var.api_certificate_arn == null ? [true] : []
+      content {
+        content_type = "text/plain"
+        message_body = "HTTPS certificate required for API access."
+        status_code  = "503"
+      }
+    }
+  }
+}
+
+resource "aws_lb_listener" "https_entry" {
+  count             = var.api_certificate_arn == null ? 0 : 1
+  load_balancer_arn = aws_alb.external_lb.arn
+  port              = "443"
+  protocol          = "HTTPS"
+  certificate_arn   = var.api_certificate_arn
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+
+  lifecycle {
+    precondition {
+      condition     = var.api_domain_name != null && trimspace(var.api_domain_name) != ""
+      error_message = "api_domain_name is required when api_certificate_arn is configured."
+    }
+  }
+
+  default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.api_tg.arn
   }
@@ -133,6 +186,9 @@ resource "aws_lb_listener" "http_entry" {
 resource "aws_cognito_user_pool" "library_pool" {
   name = "digital-library-cognito-pool"
 
+  username_attributes      = ["email"]
+  auto_verified_attributes = ["email"]
+
   password_policy {
     minimum_length    = 8
     require_lowercase = true
@@ -141,17 +197,20 @@ resource "aws_cognito_user_pool" "library_pool" {
     require_uppercase = true
   }
 
-  auto_verified_attributes = ["email"]
 }
 
 resource "aws_cognito_user_pool_client" "library_client" {
   name         = "library-app-client"
   user_pool_id = aws_cognito_user_pool.library_pool.id
 
+  read_attributes  = ["email", "email_verified"]
+  write_attributes = ["email"]
+
   explicit_auth_flows = [
     "ALLOW_USER_PASSWORD_AUTH",
     "ALLOW_REFRESH_TOKEN_AUTH"
   ]
+  prevent_user_existence_errors = "ENABLED"
 }
 
 # ==========================================
@@ -159,8 +218,7 @@ resource "aws_cognito_user_pool_client" "library_client" {
 # ==========================================
 
 resource "aws_s3_bucket" "frontend" {
-  bucket        = "digital-library-frontend-grace-prod"
-  force_destroy = true
+  bucket = var.frontend_bucket_name
 }
 
 resource "aws_s3_bucket_public_access_block" "block_public" {
@@ -185,10 +243,35 @@ resource "aws_cloudfront_origin_access_control" "oac" {
 }
 
 resource "aws_cloudfront_distribution" "cdn" {
+  lifecycle {
+    precondition {
+      condition = (
+        (var.api_certificate_arn == null) == (var.api_domain_name == null) &&
+        (var.api_domain_name == null || trimspace(var.api_domain_name) != "")
+      )
+      error_message = "Set a non-empty api_domain_name and api_certificate_arn together, or leave both unset."
+    }
+  }
+
   origin {
-    domain_name           = aws_s3_bucket.frontend.bucket_regional_domain_name
-    origin_id             = "S3-Static-Frontend"
+    domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
+    origin_id                = "S3-Static-Frontend"
     origin_access_control_id = aws_cloudfront_origin_access_control.oac.id
+  }
+
+  dynamic "origin" {
+    for_each = var.api_certificate_arn != null && var.api_domain_name != null ? [true] : []
+    content {
+      domain_name = var.api_domain_name
+      origin_id   = "Backend-API"
+
+      custom_origin_config {
+        http_port              = 80
+        https_port             = 443
+        origin_protocol_policy = "https-only"
+        origin_ssl_protocols   = ["TLSv1.2"]
+      }
+    }
   }
 
   enabled             = true
@@ -211,6 +294,24 @@ resource "aws_cloudfront_distribution" "cdn" {
     max_ttl                = 86400
   }
 
+  dynamic "ordered_cache_behavior" {
+    for_each = var.api_certificate_arn != null && var.api_domain_name != null ? [
+      "/auth/*",
+      "/books*",
+      "/games*",
+      "/health",
+    ] : []
+    content {
+      path_pattern             = ordered_cache_behavior.value
+      target_origin_id         = "Backend-API"
+      viewer_protocol_policy   = "redirect-to-https"
+      allowed_methods          = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+      cached_methods           = ["GET", "HEAD", "OPTIONS"]
+      cache_policy_id          = data.aws_cloudfront_cache_policy.api_caching_disabled.id
+      origin_request_policy_id = data.aws_cloudfront_origin_request_policy.api_forward_viewer_except_host.id
+    }
+  }
+
   restrictions {
     geo_restriction { restriction_type = "none" }
   }
@@ -231,7 +332,7 @@ resource "aws_s3_bucket_policy" "allow_cloudfront" {
       {
         Sid       = "AllowCloudFrontServicePrincipal"
         Effect    = "Allow"
-        Principal = { Service = "://amazonaws.com" }
+        Principal = { Service = "cloudfront.amazonaws.com" }
         Action    = "s3:GetObject"
         Resource  = "${aws_s3_bucket.frontend.arn}/*"
         Condition = {

@@ -143,9 +143,10 @@ docker compose up -d
 ## Run on Kubernetes with Kustomize
 
 These commands deploy the manifests in `k8s/` instead of using Docker Compose.
-You need Docker, a Kubernetes cluster, and `kubectl` configured for that
-cluster. `kubectl` includes Kustomize support, so installing the separate
-`kustomize` command is optional. Run the commands from the repository root.
+This walkthrough uses the Minikube cluster and context named `minikube`. It
+assumes Docker, Minikube, `kubectl`, and OpenSSL are installed. `kubectl`
+includes Kustomize support, so installing the separate `kustomize` command is
+optional. Run the commands from the repository root.
 
 If your terminal is currently in the `k8s/` directory, return to the
 repository root first:
@@ -154,55 +155,82 @@ repository root first:
 cd ..
 ```
 
-Check that `kubectl` can reach the intended cluster:
+### Check Minikube and kubectl status
+
+Use these commands to check whether Minikube is running and whether `kubectl`
+can reach the Minikube cluster:
 
 ```bash
+minikube status
 kubectl config current-context
 kubectl cluster-info
+kubectl get nodes
+kubectl get pods,services,persistentvolumeclaims --all-namespaces
 ```
 
-Build the container images used by the manifests:
+`minikube status` reports the Minikube host, kubelet, API server, and kubeconfig
+state. `kubectl config current-context` shows which cluster `kubectl` targets;
+for this walkthrough it should print `minikube`. `kubectl cluster-info` and
+`kubectl get nodes` verify that the Kubernetes API server responds. The final
+command summarizes workloads and storage across namespaces. If `kubectl`
+reports connection refused, check `minikube status` and start the cluster
+before retrying.
+
+### Start Minikube and verify the connection
+
+This starts the existing Minikube cluster; it does not delete or recreate it.
+Select its context and confirm that the API server is reachable:
+
+```bash
+minikube start
+kubectl config use-context minikube
+kubectl config current-context
+kubectl cluster-info
+kubectl get nodes
+```
+
+### Build and load the images
+
+Build the images from the repository root, then load them into Minikube:
 
 ```bash
 docker build -f Dockerfile.backend -t digital-library-backend:local .
 docker build -f Dockerfile.frontend -t digital-library-frontend:local .
-```
-
-Make the images available to your cluster. For `kind`:
-
-```bash
-kind load docker-image digital-library-backend:local digital-library-frontend:local
-```
-
-For Minikube:
-
-```bash
 minikube image load digital-library-backend:local
 minikube image load digital-library-frontend:local
 ```
 
-Docker Desktop Kubernetes can generally use images built by its Docker engine.
-For other cluster types, follow that provider's instructions for loading or
-publishing images.
+### Create the Kubernetes Secret
 
-The backend and PostgreSQL manifests require a Kubernetes Secret. Supply your
-own database credentials and generate a private JWT secret of at least 32
-characters. This command creates a 64-character random JWT secret without
-printing it; do not commit real credentials:
+The backend and PostgreSQL manifests both require `library-secrets`. This
+copy-and-paste block creates it only if it does not already exist. It generates
+a database password and a 32-byte JWT signing key without printing either.
+If the Secret already exists, the block leaves it unchanged.
 
 ```bash
-kubectl create secret generic library-secrets \
-  --from-literal=DB_USER='<database-user>' \
-  --from-literal=DB_PASSWORD='<database-password>' \
-  --from-literal=JWT_SECRET_KEY="$(openssl rand -hex 32)"
+if kubectl get secret library-secrets >/dev/null 2>&1; then
+  echo "Secret library-secrets already exists; leaving it unchanged."
+else
+  DB_USER=postgres
+  DB_PASSWORD="$(openssl rand -hex 24)"
+  JWT_SECRET_KEY="$(openssl rand -hex 32)"
+  kubectl create secret generic library-secrets \
+    --from-literal=DB_USER="$DB_USER" \
+    --from-literal=DB_PASSWORD="$DB_PASSWORD" \
+    --from-literal=JWT_SECRET_KEY="$JWT_SECRET_KEY"
+  unset DB_USER DB_PASSWORD JWT_SECRET_KEY
+fi
 ```
 
-Render the resources first if you want to inspect the generated Kubernetes
-configuration:
+The generated database password is stored in the Secret and used by PostgreSQL
+and the backend. Keep the Secret private. To check its key names without
+printing values, run:
 
 ```bash
-kubectl kustomize k8s/
+kubectl describe secret library-secrets
 ```
+
+### Apply the manifests and wait for readiness
 
 Apply the resources:
 
@@ -210,13 +238,20 @@ Apply the resources:
 kubectl apply -k k8s/
 ```
 
-Check the resources and wait for the workloads to become ready:
+Wait for PostgreSQL to become ready **before restarting the backend**. This
+avoids the backend's initial startup racing Kubernetes DNS and the database:
+
+```bash
+kubectl rollout status statefulset/postgres --timeout=180s
+kubectl rollout restart deployment/backend
+kubectl rollout status deployment/backend --timeout=180s
+kubectl rollout status deployment/frontend --timeout=180s
+```
+
+Review the final Pod, Service, and storage status:
 
 ```bash
 kubectl get pods,services,persistentvolumeclaims
-kubectl rollout status deployment/backend
-kubectl rollout status deployment/frontend
-kubectl rollout status statefulset/postgres
 ```
 
 ### Initialize the PostgreSQL schema
@@ -240,17 +275,20 @@ containing data you need to keep.
 
 If registration fails with an error saying `JWT_SECRET_KEY` must be at least
 32 characters, update the existing Secret with a newly generated key and
-restart the backend:
+restart the backend. This invalidates existing login tokens:
 
 ```bash
-kubectl patch secret library-secrets --type=merge \
-  -p "{\"stringData\":{\"JWT_SECRET_KEY\":\"$(openssl rand -hex 32)\"}}"
+JWT_SECRET_KEY="$(openssl rand -hex 32)"
+kubectl create secret generic library-secrets \
+  --from-literal=JWT_SECRET_KEY="$JWT_SECRET_KEY" \
+  --dry-run=client -o yaml |
+  kubectl apply -f -
+unset JWT_SECRET_KEY
 kubectl rollout restart deployment/backend
-kubectl rollout status deployment/backend
+kubectl rollout status deployment/backend --timeout=180s
 ```
 
-Rotating this key invalidates existing login tokens; users will need to log in
-again.
+### Open the frontend
 
 The frontend Service listens on port 8081 and forwards traffic to the
 container's port 80. Forward it to port 8081 on your computer:
@@ -261,6 +299,50 @@ kubectl port-forward service/frontend 8081:8081
 
 Keep that command running while using the app at
 <http://localhost:8081>. Press Ctrl+C to stop port forwarding.
+
+### Diagnose a backend startup failure
+
+This block finds the current backend Pod by its label, prints its events and
+the previous crashed container's logs, then shows Secret key names without
+revealing Secret values:
+
+```bash
+POD="$(kubectl get pods -l app=backend -o jsonpath='{.items[0].metadata.name}')"
+if [ -n "$POD" ]; then
+  kubectl describe pod "$POD"
+  kubectl logs "$POD" -c backend --previous --tail=100
+  kubectl logs "$POD" -c backend --tail=100
+else
+  echo "No backend Pod found."
+fi
+kubectl describe secret library-secrets
+```
+
+If the previous container has no logs yet, `kubectl logs ... --previous` may
+report that no previous container is available; the current-container logs
+printed next are still useful.
+
+### Stop or restart Minikube
+
+When you are finished using the cluster, stop it without deleting its
+resources or persistent database volume:
+
+```bash
+minikube stop
+```
+
+Start the same cluster again later:
+
+```bash
+minikube start
+kubectl config use-context minikube
+kubectl cluster-info
+```
+
+Do not remove the Minikube Docker container with `docker rm`; Minikube manages
+that container as the Kubernetes node. `minikube delete` permanently removes
+the cluster and its stored data, including the PostgreSQL data. Run it only
+when you intentionally want to discard the whole cluster.
 
 To remove the deployed resources later:
 

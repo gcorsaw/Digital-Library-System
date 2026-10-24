@@ -1,45 +1,61 @@
-# Provides a stable network identity for the database StatefulSet. This
-# headless Service resolves directly to its selected Pods.
+# Provides the StatefulSet with a stable network identity.
+# Because this Service is headless (clusterIP: None), DNS can resolve the
+# StatefulSet's Pod identities directly instead of routing through one Service IP.
 apiVersion: v1
 kind: Service
 metadata:
+  # Resource names are unique within a namespace and are used in Kubernetes
+  # DNS names and API paths. This name is also referenced by the StatefulSet.
   name: postgres
 spec:
+  # A headless Service has no virtual ClusterIP. It provides DNS records for
+  # the Pods selected below, which StatefulSet uses for stable Pod addresses.
   clusterIP: None
+  # Route DNS discovery and Service traffic to Pods carrying this exact label.
   selector:
     app: postgres
   ports:
+    # PostgreSQL listens on 5432 in each selected Pod.
     - port: 5432
       targetPort: 5432
 ---
-# Runs PostgreSQL as a StatefulSet so its Pod identity and storage are stable.
+# Runs PostgreSQL as a StatefulSet. StatefulSets provide Pods with stable
+# identities and persistent storage, which are useful for stateful applications.
+# Unlike interchangeable Deployment replicas, each StatefulSet Pod has an
+# ordinal identity and can retain its associated storage when rescheduled.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
+  # Identifies this StatefulSet within its namespace.
   name: postgres
 spec:
-  # The StatefulSet uses the Service above for stable network identity.
+  # Names the headless Service that provides stable DNS identities for the Pods.
   serviceName: postgres
-  # One database instance is configured; scaling this StatefulSet alone does
-  # not provide database replication or high availability.
+  # Run one PostgreSQL Pod. Increasing this count alone does not configure
+  # database replication or provide high availability.
   replicas: 1
-  # Match this label against the Pod template so the StatefulSet manages its Pod.
+  # The selector must match the labels in the Pod template below. Kubernetes
+  # uses it to determine which Pods belong to this StatefulSet.
   selector:
     matchLabels:
       app: postgres
   template:
     metadata:
+      # These labels satisfy the StatefulSet selector and let the Service
+      # identify the database Pod.
       labels:
         app: postgres
     spec:
       containers:
         - name: postgres
-          # PostgreSQL container image and major version.
+          # Use the official PostgreSQL image, pinned to major version 16.
           image: postgres:16
-          # PostgreSQL accepts database connections on port 5432.
+          # Documents the port used by PostgreSQL inside the container.
           ports:
             - containerPort: 5432
-          # Initialize the database name and credentials from the library Secret.
+          # Configure the database and credentials using environment variables.
+          # The username and password come from a Kubernetes Secret rather than
+          # being stored directly in this manifest.
           env:
             - name: POSTGRES_DB
               value: digital_library
@@ -55,18 +71,21 @@ spec:
                   key: DB_PASSWORD
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
-          # Persist database files so they survive replacement of the Pod.
+          # Mount the persistent volume at PostgreSQL's data directory so
+          # database files survive Pod replacement or rescheduling.
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
-          # Report ready only after PostgreSQL accepts connections to this DB.
+          # Mark the Pod ready only when PostgreSQL accepts connections to the
+          # configured database. Services send traffic only to ready Pods.
           readinessProbe:
             exec:
               command:
                 - sh
                 - -c
                 - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
-          # Requests inform scheduling; limits cap CPU and memory consumption.
+          # Requests affect scheduling and guarantee a minimum allocation;
+          # limits cap the CPU and memory the container can use.
           resources:
             requests:
               cpu: 100m
@@ -74,13 +93,18 @@ spec:
             limits:
               cpu: 500m
               memory: 1Gi
-  # Provision persistent storage for the StatefulSet Pod. The requested size
-  # and access mode must be supported by the cluster's storage provisioner.
+  # Create one persistent volume claim per StatefulSet Pod. The claim name,
+  # combined with the Pod identity, gives the database stable storage across
+  # Pod rescheduling. The cluster needs a storage provisioner that can satisfy
+  # the requested access mode and capacity.
   volumeClaimTemplates:
     - metadata:
+        # This name must match the volumeMount name above.
         name: postgres-data
       spec:
+        # Request exclusive read/write attachment by a single node.
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:
+            # Requested capacity for the database data volume.
             storage: 5Gi

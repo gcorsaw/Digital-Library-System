@@ -22,6 +22,58 @@ from argon2.exceptions import VerificationError, InvalidHashError
 
 # Initialize dotenv manually if needed or fallback safely
 _COGNITO_JWKS = None
+COGNITO_ISSUER_PREFIX = "https://cognito-idp."
+
+
+class CognitoApiError(Exception):
+    """Represent an error returned by the Cognito user-pool API."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+def cognito_configuration():
+    """Return required Cognito settings when the integration is enabled."""
+    region = os.getenv("AWS_REGION", "").strip()
+    user_pool_id = os.getenv("COGNITO_USER_POOL_ID", "").strip()
+    client_id = os.getenv("COGNITO_CLIENT_ID", "").strip()
+    if not region or not user_pool_id or not client_id:
+        raise RuntimeError(
+            "AWS_REGION, COGNITO_USER_POOL_ID, and COGNITO_CLIENT_ID are required when USE_COGNITO=true"
+        )
+    return region, user_pool_id, client_id
+
+
+def cognito_api(target: str, payload: dict) -> dict:
+    """Call a public Cognito user-pool API operation over HTTPS."""
+    region, _, _ = cognito_configuration()
+    try:
+        response = requests.post(
+            f"https://cognito-idp.{region}.amazonaws.com/",
+            headers={
+                "Content-Type": "application/x-amz-json-1.1",
+                "X-Amz-Target": f"AWSCognitoIdentityProviderService.{target}",
+            },
+            json=payload,
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        logging.exception("Cognito request %s failed", target)
+        raise RuntimeError("Cognito is temporarily unavailable") from error
+
+    try:
+        response_payload = response.json()
+    except ValueError as error:
+        raise RuntimeError("Cognito returned an invalid response") from error
+
+    if not isinstance(response_payload, dict):
+        raise RuntimeError("Cognito returned an invalid response")
+    if not response.ok:
+        error_type = response_payload.get("__type", "")
+        code = error_type.rsplit("#", 1)[-1].split(":", 1)[0]
+        raise CognitoApiError(code or "CognitoServiceError")
+    return response_payload
 
 def load_db_config():
     """Collect database connection settings, using local-development defaults."""
@@ -34,20 +86,25 @@ def load_db_config():
         "port": os.getenv("DB_PORT", "5440")
     }
 
-def get_cognito_public_keys():
+def get_cognito_public_keys(force_refresh: bool = False):
     """Fetch and cache the Cognito JWKS keys used to verify access tokens."""
     global _COGNITO_JWKS
-    if _COGNITO_JWKS is None:
-        region = os.getenv("AWS_REGION", "us-east-1")
-        user_pool_id = os.getenv("COGNITO_USER_POOL_ID")
-        if not user_pool_id:
-            return []
+    if _COGNITO_JWKS is None or force_refresh:
+        region, user_pool_id, _ = cognito_configuration()
         url = f"https://cognito-idp.{region}.amazonaws.com/{user_pool_id}/.well-known/jwks.json"
         try:
-            _COGNITO_JWKS = requests.get(url).json().get("keys", [])
-        except Exception:
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            document = response.json()
+            if not isinstance(document, dict):
+                raise ValueError("Cognito JWKS response is not an object")
+            keys = document.get("keys")
+            if not isinstance(keys, list):
+                raise ValueError("Cognito JWKS response does not contain a keys list")
+            _COGNITO_JWKS = keys
+        except (requests.RequestException, ValueError) as error:
             logging.exception("Failed to pull Cognito JWKS certificates")
-            return []
+            raise RuntimeError("Unable to retrieve Cognito signing keys") from error
     return _COGNITO_JWKS
 
 try:
@@ -227,45 +284,76 @@ def create_access_token(user_id: int, username: str) -> str:
     }
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
-# COGNITO INTEGRATION: Token cross-verification mechanism routing securely
+def decode_bearer_token(token: str) -> dict:
+    """Verify a native JWT or Cognito access token and return its identity."""
+    try:
+        unverified_payload = jwt.decode(token, options={"verify_signature": False})
+        issuer = unverified_payload.get("iss", "")
+
+        if issuer.startswith(COGNITO_ISSUER_PREFIX):
+            if os.getenv("USE_COGNITO", "false").lower() != "true":
+                raise jwt.PyJWTError("Cognito authentication is disabled")
+            region, user_pool_id, client_id = cognito_configuration()
+            expected_issuer = f"https://cognito-idp.{region}.amazonaws.com/{user_pool_id}"
+            if issuer != expected_issuer:
+                raise jwt.PyJWTError("Token issuer does not match the configured Cognito user pool")
+
+            key_id = jwt.get_unverified_header(token).get("kid")
+            keys = get_cognito_public_keys()
+            jwk = next((key for key in keys if key.get("kid") == key_id), None)
+            if jwk is None:
+                keys = get_cognito_public_keys(force_refresh=True)
+                jwk = next((key for key in keys if key.get("kid") == key_id), None)
+            if jwk is None:
+                raise jwt.PyJWTError("Matching Cognito signing key was not found")
+
+            claims = jwt.decode(
+                token,
+                jwt.PyJWK.from_dict(jwk).key,
+                algorithms=["RS256"],
+                issuer=expected_issuer,
+                options={
+                    "verify_aud": False,
+                    "require": ["exp", "iat", "sub", "token_use", "client_id"],
+                },
+            )
+            if claims["token_use"] != "access" or claims["client_id"] != client_id:
+                raise jwt.PyJWTError("Token is not an access token for this Cognito app client")
+            return {
+                "identity_provider": "aws_cognito",
+                "user_id": claims["sub"],
+                "username": claims.get("username"),
+            }
+
+        claims = jwt.decode(
+            token,
+            get_jwt_secret(),
+            algorithms=[JWT_ALGORITHM],
+            options={"require": ["exp", "sub", "username"]},
+        )
+        return {
+            "identity_provider": "native_jwt",
+            "user_id": int(claims["sub"]),
+            "username": claims["username"],
+        }
+    except RuntimeError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(error),
+        ) from error
+    except (jwt.PyJWTError, KeyError, TypeError, ValueError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token credentials.",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from error
+
+
 async def verify_cognito_or_jwt(credentials: HTTPAuthorizationCredentials = Depends(security_agent)):
     """Validate a Cognito or native JWT and return its provider and user identity."""
     if not credentials:
         raise HTTPException(status_code=401, detail="Please log in to continue.")
-    token = credentials.credentials
-    try:
-        unverified_header = jwt.get_unverified_header(token)
-        issuer = jwt.decode(token, options={"verify_signature": False}).get("iss", "")
-        
-        if "cognito" in issuer or os.getenv("USE_COGNITO") == "true":
-            keys = get_cognito_public_keys()
-            kid = unverified_header.get("kid")
-            public_key = next((k for k in keys if k["kid"] == kid), None)
-            
-            if not public_key:
-                raise jwt.PyJWTError("Matching cloud validation certificate key not found")
-                
-            region = os.getenv("AWS_REGION", "us-east-1")
-            user_pool_id = os.getenv("COGNITO_USER_POOL_ID")
-            expected_iss = f"https://cognito-idp.{region}.amazonaws.com/{user_pool_id}"
-            
-            decoded_payload = jwt.decode(
-                token, 
-                public_key, 
-                algorithms=["RS256"], 
-                audience=os.getenv("COGNITO_CLIENT_ID"),
-                issuer=expected_iss
-            )
-            return {
-                "identity_provider": "aws_cognito", 
-                "user_id": decoded_payload.get("sub"), 
-                "username": decoded_payload.get("username")
-            }
-        else:
-            decoded_payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
-            return {"identity_provider": "native_jwt", "user_id": int(decoded_payload["sub"]), "username": decoded_payload["username"]}
-    except jwt.PyJWTError as token_error:
-        raise HTTPException(status_code=401, detail=f"Invalid token credentials: {str(token_error)}")
+    return decode_bearer_token(credentials.credentials)
 
 class RegisterRequest(BaseModel):
     username: str
@@ -294,11 +382,36 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+
+class CognitoRegisterRequest(BaseModel):
+    email: str
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def check_email(cls, value: str) -> str:
+        """Validate and normalize the email used as the Cognito username."""
+        value = value.strip()
+        if len(value) > 254 or not EMAIL_RE.match(value):
+            raise ValueError("Enter a valid email address")
+        return value
+
+
+class CognitoConfirmRequest(BaseModel):
+    email: str
+    confirmation_code: str = Field(min_length=1, max_length=64)
+
+
+class CognitoLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security_agent),
     cursor: RealDictCursor = Depends(get_db_cursor),
 ) -> dict:
-    """Authenticate a native JWT, load its user, and activate that user's schema."""
+    """Authenticate a native or Cognito token, load its profile, and activate its schema."""
     unauthorized = HTTPException(
         status_code=401,
         detail="Please log in to continue.",
@@ -306,25 +419,91 @@ def get_current_user(
     )
     if credentials is None:
         raise unauthorized
-    try:
-        payload = jwt.decode(
-            credentials.credentials,
-            get_jwt_secret(),
-            algorithms=[JWT_ALGORITHM],
-            options={"require": ["exp", "sub"]},
+    identity = decode_bearer_token(credentials.credentials)
+    if identity["identity_provider"] == "aws_cognito":
+        user = get_or_create_cognito_user(identity, credentials.credentials, cursor)
+    else:
+        cursor.execute(
+            "SELECT user_id, username, email FROM reader_info WHERE user_id = %s;",
+            (identity["user_id"],),
         )
-        user_id = int(payload["sub"])
-    except (jwt.PyJWTError, ValueError):
-        raise unauthorized
-    cursor.execute(
-        "SELECT user_id, username, email FROM reader_info WHERE user_id = %s;",
-        (user_id,),
-    )
-    user = cursor.fetchone()
+        user = cursor.fetchone()
     if user is None:
         raise unauthorized
-    activate_user_schema(cursor, user_id)
+    activate_user_schema(cursor, user["user_id"])
     return dict(user)
+
+
+def get_or_create_cognito_user(identity: dict, access_token: str, cursor: RealDictCursor) -> dict:
+    """Resolve Cognito sub to a local profile, linking only a verified matching email."""
+    cursor.execute(
+        "SELECT user_id, username, email FROM reader_info WHERE external_auth_id = %s;",
+        (identity["user_id"],),
+    )
+    user = cursor.fetchone()
+    if user is not None:
+        return user
+
+    try:
+        user_info = cognito_api("GetUser", {"AccessToken": access_token})
+    except CognitoApiError as error:
+        raise HTTPException(status_code=401, detail="Invalid Cognito access token.") from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    attributes = {item["Name"]: item["Value"] for item in user_info.get("UserAttributes", [])}
+    email = attributes.get("email", "").strip()
+    if not email or attributes.get("email_verified", "").lower() != "true":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="A verified email address is required for a Cognito account.",
+        )
+
+    cursor.execute(
+        "SELECT user_id, username, email, external_auth_id FROM reader_info WHERE email = %s;",
+        (email,),
+    )
+    user = cursor.fetchone()
+    if user is not None:
+        if user.get("external_auth_id") not in (None, identity["user_id"]):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This email is already linked to a different Cognito account.",
+            )
+        if user.get("external_auth_id") is None:
+            cursor.execute(
+                """
+                UPDATE reader_info
+                SET external_auth_id = %s
+                WHERE user_id = %s AND external_auth_id IS NULL
+                RETURNING user_id, username, email;
+                """,
+                (identity["user_id"], user["user_id"]),
+            )
+            linked_user = cursor.fetchone()
+            if linked_user is not None:
+                return linked_user
+            cursor.execute(
+                "SELECT user_id, username, email FROM reader_info WHERE external_auth_id = %s;",
+                (identity["user_id"],),
+            )
+            linked_user = cursor.fetchone()
+            if linked_user is not None:
+                return linked_user
+            raise HTTPException(status_code=409, detail="Unable to link this Cognito account.")
+        return user
+
+    username_suffix = re.sub(r"[^a-zA-Z0-9]", "", identity["user_id"])[:20].lower()
+    cursor.execute(
+        """
+        INSERT INTO reader_info (username, email, external_auth_id)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (external_auth_id) DO UPDATE SET external_auth_id = EXCLUDED.external_auth_id
+        RETURNING user_id, username, email;
+        """,
+        (f"cognito_{username_suffix}", email, identity["user_id"]),
+    )
+    return cursor.fetchone()
 
 @library_app.post("/auth/register", status_code=status.HTTP_201_CREATED)
 def register(body: RegisterRequest, cursor: RealDictCursor = Depends(get_db_cursor)):
@@ -347,6 +526,115 @@ def register(body: RegisterRequest, cursor: RealDictCursor = Depends(get_db_curs
         "token_type": "bearer",
         "user": dict(user),
     }
+
+
+def cognito_http_error(error: CognitoApiError) -> HTTPException:
+    """Translate Cognito errors into stable API responses without exposing provider details."""
+    if error.code == "UsernameExistsException":
+        return HTTPException(status_code=409, detail="An account with this email already exists.")
+    if error.code in {
+        "CodeMismatchException",
+        "ExpiredCodeException",
+        "InvalidParameterException",
+        "InvalidPasswordException",
+    }:
+        return HTTPException(status_code=400, detail="Cognito rejected the supplied account details.")
+    if error.code in {"NotAuthorizedException", "UserNotFoundException"}:
+        return HTTPException(status_code=401, detail="Invalid email, password, or confirmation code.")
+    if error.code in {"LimitExceededException", "TooManyRequestsException"}:
+        return HTTPException(status_code=429, detail="Too many Cognito requests. Try again later.")
+    logging.error("Cognito operation failed with provider error %s", error.code)
+    return HTTPException(status_code=502, detail="Cognito could not complete the request.")
+
+
+def cognito_tokens(email: str, password: str) -> dict:
+    """Authenticate a confirmed Cognito user and return bearer-token fields."""
+    _, _, client_id = cognito_configuration()
+    result = cognito_api(
+        "InitiateAuth",
+        {
+            "AuthFlow": "USER_PASSWORD_AUTH",
+            "ClientId": client_id,
+            "AuthParameters": {"USERNAME": email, "PASSWORD": password},
+        },
+    )
+    authentication = result.get("AuthenticationResult")
+    if not authentication or not authentication.get("AccessToken"):
+        raise HTTPException(
+            status_code=409,
+            detail="Cognito requires an additional authentication step that this client does not support.",
+        )
+    token_response = {
+        "access_token": authentication["AccessToken"],
+        "token_type": authentication.get("TokenType", "Bearer").lower(),
+        "expires_in": authentication.get("ExpiresIn"),
+    }
+    if authentication.get("RefreshToken"):
+        token_response["refresh_token"] = authentication["RefreshToken"]
+    return token_response
+
+
+@library_app.post("/auth/cognito/register", status_code=status.HTTP_202_ACCEPTED)
+def register_cognito(body: CognitoRegisterRequest):
+    """Create a Cognito account and request email confirmation."""
+    if os.getenv("USE_COGNITO", "false").lower() != "true":
+        raise HTTPException(status_code=503, detail="Cognito authentication is not enabled.")
+    try:
+        _, _, client_id = cognito_configuration()
+        result = cognito_api(
+            "SignUp",
+            {
+                "ClientId": client_id,
+                "Username": body.email,
+                "Password": body.password,
+                "UserAttributes": [{"Name": "email", "Value": body.email}],
+            },
+        )
+    except CognitoApiError as error:
+        raise cognito_http_error(error) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    delivery = result.get("CodeDeliveryDetails", {})
+    return {
+        "message": "Check your email for a Cognito confirmation code.",
+        "delivery_medium": delivery.get("DeliveryMedium", "EMAIL"),
+    }
+
+
+@library_app.post("/auth/cognito/confirm")
+def confirm_cognito(body: CognitoConfirmRequest):
+    """Confirm a Cognito email address before the user signs in."""
+    if os.getenv("USE_COGNITO", "false").lower() != "true":
+        raise HTTPException(status_code=503, detail="Cognito authentication is not enabled.")
+    try:
+        _, _, client_id = cognito_configuration()
+        cognito_api(
+            "ConfirmSignUp",
+            {
+                "ClientId": client_id,
+                "Username": body.email.strip(),
+                "ConfirmationCode": body.confirmation_code.strip(),
+            },
+        )
+        return {"message": "Email confirmed. Sign in with your email and password."}
+    except CognitoApiError as error:
+        raise cognito_http_error(error) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@library_app.post("/auth/cognito/login")
+def login_cognito(body: CognitoLoginRequest):
+    """Authenticate with Cognito and return an access token for protected API routes."""
+    if os.getenv("USE_COGNITO", "false").lower() != "true":
+        raise HTTPException(status_code=503, detail="Cognito authentication is not enabled.")
+    try:
+        return cognito_tokens(body.email.strip(), body.password)
+    except CognitoApiError as error:
+        raise cognito_http_error(error) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
 
 @library_app.post("/auth/login")
 def login(body: LoginRequest, cursor: RealDictCursor = Depends(get_db_cursor)):

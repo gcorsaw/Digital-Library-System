@@ -8,11 +8,13 @@ login, book and game management, and the validation of input data, providing a c
 suite to verify the functionality and robustness of the application.
 """
 import asyncio
+import json
 import os
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, call
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 
@@ -119,11 +121,13 @@ def test_get_cognito_public_keys_fetches_and_caches(monkeypatch):
     monkeypatch.setattr(main, "_COGNITO_JWKS", None)
     monkeypatch.setenv("AWS_REGION", "us-west-2")
     monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
 
     assert main.get_cognito_public_keys() == keys
     assert main.get_cognito_public_keys() == keys
     request.assert_called_once_with(
-        "https://cognito-idp.us-west-2.amazonaws.com/pool-123/.well-known/jwks.json"
+        "https://cognito-idp.us-west-2.amazonaws.com/pool-123/.well-known/jwks.json",
+        timeout=5,
     )
 
 def test_get_cognito_public_keys_skips_request_without_pool_id(monkeypatch):
@@ -132,8 +136,11 @@ def test_get_cognito_public_keys_skips_request_without_pool_id(monkeypatch):
     monkeypatch.setattr(main.requests, "get", request)
     monkeypatch.setattr(main, "_COGNITO_JWKS", None)
     monkeypatch.delenv("COGNITO_USER_POOL_ID", raising=False)
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
 
-    assert main.get_cognito_public_keys() == []
+    with pytest.raises(RuntimeError, match="COGNITO_USER_POOL_ID"):
+        main.get_cognito_public_keys()
     request.assert_not_called()
 
 def test_create_access_token_contains_user_and_expiration(monkeypatch):
@@ -158,6 +165,7 @@ def test_get_jwt_secret_rejects_short_secrets(monkeypatch):
 def test_verify_cognito_or_jwt_accepts_native_token(monkeypatch):
     """Verify the token verifier accepts a valid native JWT."""
     monkeypatch.setenv("JWT_SECRET_KEY", TOKEN_SECRET)
+    monkeypatch.setenv("USE_COGNITO", "true")
     token = main.create_access_token(7, "reader")
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
@@ -588,13 +596,20 @@ def test_activate_user_schema_creates_schema_and_reports_missing_citext(monkeypa
     assert cursor.execute.call_count == 6
     assert '"extensions".citext' in cursor.execute.call_args.args[0]
 
-def test_cognito_key_fetch_failure_is_logged_and_returns_empty_keys(monkeypatch, caplog):
-    """Verify key-fetch failures are logged and return no signing keys."""
+def test_cognito_key_fetch_failure_is_logged_and_raised(monkeypatch, caplog):
+    """Verify key-fetch failures are logged and reported instead of failing open."""
     monkeypatch.setattr(main, "_COGNITO_JWKS", None)
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
     monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
-    monkeypatch.setattr(main.requests, "get", MagicMock(side_effect=OSError("network down")))
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    monkeypatch.setattr(
+        main.requests,
+        "get",
+        MagicMock(side_effect=main.requests.ConnectionError("network down")),
+    )
 
-    assert main.get_cognito_public_keys() == []
+    with pytest.raises(RuntimeError, match="Unable to retrieve Cognito signing keys"):
+        main.get_cognito_public_keys()
     assert "Failed to pull Cognito JWKS certificates" in caplog.text
 
 def test_verify_cognito_token_uses_matching_public_key(monkeypatch):
@@ -603,11 +618,19 @@ def test_verify_cognito_token_uses_matching_public_key(monkeypatch):
     monkeypatch.setenv("AWS_REGION", "us-west-2")
     monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
     monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    monkeypatch.setenv("USE_COGNITO", "true")
     monkeypatch.setattr(main, "get_cognito_public_keys", lambda: [{"kid": "key-1"}])
+    key = MagicMock()
+    monkeypatch.setattr(main.jwt.PyJWK, "from_dict", lambda jwk: key)
     decode = MagicMock(
         side_effect=[
             {"iss": "https://cognito-idp.us-west-2.amazonaws.com/pool-123"},
-            {"sub": "cognito-user", "username": "reader"},
+            {
+                "sub": "cognito-user",
+                "username": "reader",
+                "token_use": "access",
+                "client_id": "client-456",
+            },
         ]
     )
     monkeypatch.setattr(main.jwt, "get_unverified_header", lambda token: {"kid": "key-1"})
@@ -622,23 +645,842 @@ def test_verify_cognito_token_uses_matching_public_key(monkeypatch):
     }
     assert decode.call_args.kwargs == {
         "algorithms": ["RS256"],
-        "audience": "client-456",
         "issuer": "https://cognito-idp.us-west-2.amazonaws.com/pool-123",
+        "options": {
+            "verify_aud": False,
+            "require": ["exp", "iat", "sub", "token_use", "client_id"],
+        },
     }
+
+
+def test_decode_bearer_token_verifies_real_cognito_access_token(monkeypatch):
+    """Verify a signed Cognito access token using its matching public JWK."""
+    monkeypatch.setenv("USE_COGNITO", "true")
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwk = json.loads(main.jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
+    jwk["kid"] = "signing-key"
+    monkeypatch.setattr(main, "get_cognito_public_keys", lambda: [jwk])
+    now = int(datetime.now(timezone.utc).timestamp())
+    token = main.jwt.encode(
+        {
+            "iss": "https://cognito-idp.us-west-2.amazonaws.com/pool-123",
+            "sub": "cognito-subject",
+            "username": "reader@example.com",
+            "client_id": "client-456",
+            "token_use": "access",
+            "iat": now,
+            "exp": now + 300,
+        },
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "signing-key"},
+    )
+
+    assert main.decode_bearer_token(token) == {
+        "identity_provider": "aws_cognito",
+        "user_id": "cognito-subject",
+        "username": "reader@example.com",
+    }
+
 
 def test_verify_cognito_token_rejects_unmatched_key(monkeypatch):
     """Verify Cognito tokens with unknown key IDs are rejected."""
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="cognito-token")
     monkeypatch.setenv("USE_COGNITO", "true")
-    monkeypatch.setattr(main, "get_cognito_public_keys", lambda: [{"kid": "other-key"}])
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    monkeypatch.setattr(
+        main,
+        "get_cognito_public_keys",
+        lambda force_refresh=False: [{"kid": "other-key"}],
+    )
     monkeypatch.setattr(main.jwt, "get_unverified_header", lambda token: {"kid": "missing-key"})
-    monkeypatch.setattr(main.jwt, "decode", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        main.jwt,
+        "decode",
+        lambda *args, **kwargs: {"iss": "https://cognito-idp.us-west-2.amazonaws.com/pool-123"},
+    )
 
     with pytest.raises(HTTPException) as error:
         asyncio.run(main.verify_cognito_or_jwt(credentials))
 
     assert error.value.status_code == 401
-    assert "Matching cloud validation certificate key not found" in error.value.detail
+    assert error.value.detail == "Invalid token credentials."
+
+
+def test_register_cognito_requests_email_confirmation(monkeypatch):
+    """Verify Cognito sign-up uses the configured public app client."""
+    monkeypatch.setenv("USE_COGNITO", "true")
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    cognito_request = MagicMock(return_value={
+        "CodeDeliveryDetails": {"DeliveryMedium": "EMAIL"}
+    })
+    monkeypatch.setattr(main, "cognito_api", cognito_request)
+
+    result = main.register_cognito(
+        main.CognitoRegisterRequest(
+            email="reader@example.com",
+            password="Valid!Password1",
+        )
+    )
+
+    assert result == {
+        "message": "Check your email for a Cognito confirmation code.",
+        "delivery_medium": "EMAIL",
+    }
+    cognito_request.assert_called_once_with(
+        "SignUp",
+        {
+            "ClientId": "client-456",
+            "Username": "reader@example.com",
+            "Password": "Valid!Password1",
+            "UserAttributes": [{"Name": "email", "Value": "reader@example.com"}],
+        },
+    )
+
+
+def test_cognito_login_returns_access_token(monkeypatch):
+    """Verify Cognito login returns its API access token without replacing native login."""
+    monkeypatch.setenv("USE_COGNITO", "true")
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    cognito_request = MagicMock(return_value={
+        "AuthenticationResult": {
+            "AccessToken": "access-token",
+            "TokenType": "Bearer",
+            "ExpiresIn": 3600,
+            "RefreshToken": "refresh-token",
+        }
+    })
+    monkeypatch.setattr(main, "cognito_api", cognito_request)
+
+    result = main.login_cognito(
+        main.CognitoLoginRequest(email="reader@example.com", password="Valid!Password1")
+    )
+
+    assert result == {
+        "access_token": "access-token",
+        "token_type": "bearer",
+        "expires_in": 3600,
+        "refresh_token": "refresh-token",
+    }
+    cognito_request.assert_called_once_with(
+        "InitiateAuth",
+        {
+            "AuthFlow": "USER_PASSWORD_AUTH",
+            "ClientId": "client-456",
+            "AuthParameters": {
+                "USERNAME": "reader@example.com",
+                "PASSWORD": "Valid!Password1",
+            },
+        },
+    )
+
+
+def test_cognito_identity_links_existing_profile_only_by_verified_email(monkeypatch):
+    """Verify a verified Cognito email links to the corresponding native user profile."""
+    cursor = MagicMock()
+    cursor.fetchone.side_effect = [
+        None,
+        {
+            "user_id": 7,
+            "username": "reader",
+            "email": "reader@example.com",
+            "external_auth_id": None,
+        },
+        {"user_id": 7, "username": "reader", "email": "reader@example.com"},
+    ]
+    monkeypatch.setattr(
+        main,
+        "cognito_api",
+        MagicMock(return_value={
+            "UserAttributes": [
+                {"Name": "email", "Value": "reader@example.com"},
+                {"Name": "email_verified", "Value": "true"},
+            ]
+        }),
+    )
+
+    result = main.get_or_create_cognito_user(
+        {"user_id": "cognito-sub", "identity_provider": "aws_cognito"},
+        "cognito-access-token",
+        cursor,
+    )
+
+    assert result == {"user_id": 7, "username": "reader", "email": "reader@example.com"}
+    assert "UPDATE reader_info" in cursor.execute.call_args.args[0]
+    assert cursor.execute.call_args.args[1] == ("cognito-sub", 7)
+
+
+def test_cognito_identity_requires_verified_email(monkeypatch):
+    """Verify a Cognito identity without a verified email cannot get a local profile."""
+    cursor = MagicMock()
+    cursor.fetchone.return_value = None
+    monkeypatch.setattr(
+        main,
+        "cognito_api",
+        MagicMock(return_value={
+            "UserAttributes": [
+                {"Name": "email", "Value": "reader@example.com"},
+                {"Name": "email_verified", "Value": "false"},
+            ]
+        }),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        main.get_or_create_cognito_user(
+            {"user_id": "cognito-sub", "identity_provider": "aws_cognito"},
+            "cognito-access-token",
+            cursor,
+        )
+
+    assert error.value.status_code == 403
+    assert "verified email" in error.value.detail
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    [
+        ("AWS_REGION", ""),
+        ("COGNITO_USER_POOL_ID", ""),
+        ("COGNITO_CLIENT_ID", ""),
+    ],
+)
+def test_cognito_configuration_requires_each_setting(monkeypatch, setting, value):
+    """Verify every required Cognito setting is checked."""
+    for name in ("AWS_REGION", "COGNITO_USER_POOL_ID", "COGNITO_CLIENT_ID"):
+        monkeypatch.setenv(name, "configured")
+    monkeypatch.setenv(setting, value)
+
+    with pytest.raises(RuntimeError, match="AWS_REGION"):
+        main.cognito_configuration()
+
+
+def test_cognito_configuration_returns_trimmed_settings(monkeypatch):
+    """Verify Cognito settings are stripped before use."""
+    monkeypatch.setenv("AWS_REGION", " us-west-2 ")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", " pool-123 ")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", " client-456 ")
+
+    assert main.cognito_configuration() == ("us-west-2", "pool-123", "client-456")
+
+
+def test_cognito_api_posts_signed_public_operation(monkeypatch):
+    """Verify Cognito API requests use the region endpoint and operation header."""
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    response = MagicMock(ok=True)
+    response.json.return_value = {"UserSub": "cognito-sub"}
+    request = MagicMock(return_value=response)
+    monkeypatch.setattr(main.requests, "post", request)
+
+    assert main.cognito_api("SignUp", {"ClientId": "client-456"}) == {
+        "UserSub": "cognito-sub"
+    }
+    request.assert_called_once_with(
+        "https://cognito-idp.us-west-2.amazonaws.com/",
+        headers={
+            "Content-Type": "application/x-amz-json-1.1",
+            "X-Amz-Target": "AWSCognitoIdentityProviderService.SignUp",
+        },
+        json={"ClientId": "client-456"},
+        timeout=10,
+    )
+
+
+def test_cognito_api_reports_transport_and_invalid_json_errors(monkeypatch):
+    """Verify Cognito network errors and invalid responses are surfaced."""
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    monkeypatch.setattr(
+        main.requests,
+        "post",
+        MagicMock(side_effect=main.requests.ConnectionError("offline")),
+    )
+    with pytest.raises(RuntimeError, match="temporarily unavailable"):
+        main.cognito_api("SignUp", {})
+
+    response = MagicMock(ok=True)
+    response.json.side_effect = ValueError("not JSON")
+    monkeypatch.setattr(main.requests, "post", MagicMock(return_value=response))
+    with pytest.raises(RuntimeError, match="invalid response"):
+        main.cognito_api("SignUp", {})
+
+    response.json.side_effect = None
+    response.json.return_value = ["not", "an", "object"]
+    with pytest.raises(RuntimeError, match="invalid response"):
+        main.cognito_api("SignUp", {})
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_code"),
+    [
+        ({"__type": "com.example#UsernameExistsException:http"}, "UsernameExistsException"),
+        ({}, "CognitoServiceError"),
+    ],
+)
+def test_cognito_api_translates_provider_errors(monkeypatch, payload, expected_code):
+    """Verify Cognito error payloads become typed provider exceptions."""
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    response = MagicMock(ok=False)
+    response.json.return_value = payload
+    monkeypatch.setattr(main.requests, "post", MagicMock(return_value=response))
+
+    with pytest.raises(main.CognitoApiError) as error:
+        main.cognito_api("SignUp", {})
+
+    assert error.value.code == expected_code
+    assert str(error.value) == expected_code
+
+
+@pytest.mark.parametrize("document", [[], {"keys": "not-a-list"}])
+def test_cognito_jwks_rejects_malformed_documents(monkeypatch, document):
+    """Verify invalid JWKS payload and key-list shapes fail explicitly."""
+    monkeypatch.setattr(main, "_COGNITO_JWKS", None)
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    response = MagicMock()
+    response.json.return_value = document
+    monkeypatch.setattr(main.requests, "get", MagicMock(return_value=response))
+
+    with pytest.raises(RuntimeError, match="Unable to retrieve Cognito signing keys"):
+        main.get_cognito_public_keys()
+
+
+def test_cognito_jwks_refreshes_cached_keys(monkeypatch):
+    """Verify a forced JWKS refresh replaces the cached key set."""
+    old_keys = [{"kid": "old"}]
+    new_keys = [{"kid": "new"}]
+    monkeypatch.setattr(main, "_COGNITO_JWKS", old_keys)
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    response = MagicMock()
+    response.json.return_value = {"keys": new_keys}
+    request = MagicMock(return_value=response)
+    monkeypatch.setattr(main.requests, "get", request)
+
+    assert main.get_cognito_public_keys() == old_keys
+    assert main.get_cognito_public_keys(force_refresh=True) == new_keys
+    request.assert_called_once_with(
+        "https://cognito-idp.us-east-1.amazonaws.com/pool-123/.well-known/jwks.json",
+        timeout=5,
+    )
+
+
+def cognito_issuer_token(issuer):
+    """Build a signed token with a chosen issuer for verifier rejection tests."""
+    return main.jwt.encode(
+        {"iss": issuer, "sub": "cognito-sub"},
+        "unit-test-secret-that-is-long-enough-32",
+        algorithm="HS256",
+    )
+
+
+def test_cognito_token_verification_rejects_disabled_and_misconfigured_tokens(monkeypatch):
+    """Verify Cognito token use is disabled by default and requires complete configuration."""
+    token = cognito_issuer_token("https://cognito-idp.us-west-2.amazonaws.com/pool-123")
+    monkeypatch.setenv("USE_COGNITO", "false")
+    with pytest.raises(HTTPException) as disabled:
+        main.decode_bearer_token(token)
+    assert disabled.value.status_code == 401
+
+    monkeypatch.setenv("USE_COGNITO", "true")
+    monkeypatch.delenv("COGNITO_CLIENT_ID", raising=False)
+    with pytest.raises(HTTPException) as missing_config:
+        main.decode_bearer_token(token)
+    assert missing_config.value.status_code == 503
+
+
+def test_cognito_token_verification_rejects_wrong_issuer(monkeypatch):
+    """Verify a token from a different Cognito pool is rejected."""
+    monkeypatch.setenv("USE_COGNITO", "true")
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+
+    with pytest.raises(HTTPException) as error:
+        main.decode_bearer_token(
+            cognito_issuer_token("https://cognito-idp.us-west-2.amazonaws.com/other-pool")
+        )
+    assert error.value.status_code == 401
+
+
+def test_cognito_token_verification_surfaces_jwks_failure_as_service_unavailable(monkeypatch):
+    """Verify JWKS network failures become a service-unavailable response."""
+    monkeypatch.setenv("USE_COGNITO", "true")
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    monkeypatch.setattr(
+        main,
+        "get_cognito_public_keys",
+        MagicMock(side_effect=RuntimeError("JWKS unavailable")),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        main.decode_bearer_token(
+            cognito_issuer_token("https://cognito-idp.us-west-2.amazonaws.com/pool-123")
+        )
+    assert error.value.status_code == 503
+    assert error.value.detail == "JWKS unavailable"
+
+
+def test_cognito_token_verification_rejects_id_tokens_and_wrong_clients(monkeypatch):
+    """Verify only access tokens issued for the configured app client are accepted."""
+    monkeypatch.setenv("USE_COGNITO", "true")
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    monkeypatch.setattr(main, "get_cognito_public_keys", lambda: [{"kid": "key-1"}])
+    monkeypatch.setattr(main.jwt.PyJWK, "from_dict", lambda jwk: MagicMock(key="public-key"))
+    monkeypatch.setattr(main.jwt, "get_unverified_header", lambda token: {"kid": "key-1"})
+
+    for claims in (
+        {"token_use": "id", "client_id": "client-456"},
+        {"token_use": "access", "client_id": "another-client"},
+    ):
+        decode = MagicMock(
+            side_effect=[
+                {"iss": "https://cognito-idp.us-west-2.amazonaws.com/pool-123"},
+                {
+                    **claims,
+                    "sub": "cognito-sub",
+                    "iat": 1,
+                    "exp": 9999999999,
+                },
+            ]
+        )
+        monkeypatch.setattr(main.jwt, "decode", decode)
+        with pytest.raises(HTTPException) as error:
+            main.decode_bearer_token("signed-token")
+        assert error.value.status_code == 401
+
+
+def test_cognito_token_refreshes_jwks_for_rotated_signing_key(monkeypatch):
+    """Verify an unknown cached key triggers a refresh and accepts the rotated key."""
+    monkeypatch.setenv("USE_COGNITO", "true")
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    key = MagicMock(key="public-key")
+    monkeypatch.setattr(main.jwt.PyJWK, "from_dict", lambda jwk: key)
+    monkeypatch.setattr(main.jwt, "get_unverified_header", lambda token: {"kid": "rotated"})
+    key_lookup = MagicMock(side_effect=[[], [{"kid": "rotated"}]])
+    monkeypatch.setattr(main, "get_cognito_public_keys", key_lookup)
+    monkeypatch.setattr(
+        main.jwt,
+        "decode",
+        MagicMock(
+            side_effect=[
+                {"iss": "https://cognito-idp.us-west-2.amazonaws.com/pool-123"},
+                {
+                    "sub": "cognito-sub",
+                    "token_use": "access",
+                    "client_id": "client-456",
+                    "iat": 1,
+                    "exp": 9999999999,
+                },
+            ]
+        ),
+    )
+
+    result = main.decode_bearer_token("signed-token")
+
+    assert result["identity_provider"] == "aws_cognito"
+    assert key_lookup.call_args_list == [call(), call(force_refresh=True)]
+
+
+def test_get_current_user_resolves_cognito_profile(monkeypatch):
+    """Verify a valid Cognito identity resolves and activates its local profile."""
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="access-token")
+    profile = {"user_id": 12, "username": "cognito_reader", "email": "reader@example.com"}
+    monkeypatch.setattr(
+        main,
+        "decode_bearer_token",
+        lambda token: {"identity_provider": "aws_cognito", "user_id": "subject"},
+    )
+    resolve = MagicMock(return_value=profile)
+    activate = MagicMock()
+    monkeypatch.setattr(main, "get_or_create_cognito_user", resolve)
+    monkeypatch.setattr(main, "activate_user_schema", activate)
+
+    assert main.get_current_user(credentials, MagicMock()) == profile
+    resolve.assert_called_once_with(
+        {"identity_provider": "aws_cognito", "user_id": "subject"},
+        "access-token",
+        resolve.call_args.args[2],
+    )
+    activate.assert_called_once_with(resolve.call_args.args[2], profile["user_id"])
+
+
+def test_get_or_create_cognito_user_returns_existing_identity(monkeypatch):
+    """Verify an already-linked Cognito subject avoids another provider request."""
+    cursor = MagicMock()
+    cursor.fetchone.return_value = USER
+    provider_call = MagicMock()
+    monkeypatch.setattr(main, "cognito_api", provider_call)
+
+    assert main.get_or_create_cognito_user(
+        {"user_id": "subject"}, "access-token", cursor
+    ) == USER
+    provider_call.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("provider_error", "status_code"),
+    [(main.CognitoApiError("InvalidToken"), 401), (RuntimeError("unavailable"), 503)],
+)
+def test_get_or_create_cognito_user_maps_provider_errors(
+    monkeypatch, provider_error, status_code
+):
+    """Verify provider authentication and availability errors are translated."""
+    cursor = MagicMock()
+    cursor.fetchone.return_value = None
+    monkeypatch.setattr(main, "cognito_api", MagicMock(side_effect=provider_error))
+
+    with pytest.raises(HTTPException) as error:
+        main.get_or_create_cognito_user(
+            {"user_id": "subject"}, "access-token", cursor
+        )
+    assert error.value.status_code == status_code
+
+
+def test_get_or_create_cognito_user_rejects_missing_email(monkeypatch):
+    """Verify a Cognito profile with no email is not linked to an app account."""
+    cursor = MagicMock()
+    cursor.fetchone.return_value = None
+    monkeypatch.setattr(
+        main,
+        "cognito_api",
+        MagicMock(return_value={"UserAttributes": [{"Name": "email_verified", "Value": "true"}]}),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        main.get_or_create_cognito_user({"user_id": "subject"}, "access-token", cursor)
+    assert error.value.status_code == 403
+
+
+def test_get_or_create_cognito_user_rejects_email_linked_to_other_subject(monkeypatch):
+    """Verify a verified email already linked to another Cognito subject conflicts."""
+    cursor = MagicMock()
+    cursor.fetchone.side_effect = [
+        None,
+        {**USER, "external_auth_id": "different-subject"},
+    ]
+    monkeypatch.setattr(
+        main,
+        "cognito_api",
+        MagicMock(
+            return_value={
+                "UserAttributes": [
+                    {"Name": "email", "Value": USER["email"]},
+                    {"Name": "email_verified", "Value": "true"},
+                ]
+            }
+        ),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        main.get_or_create_cognito_user(
+            {"user_id": "subject"}, "access-token", cursor
+        )
+    assert error.value.status_code == 409
+
+
+def test_get_or_create_cognito_user_returns_profile_already_linked_to_same_subject(
+    monkeypatch,
+):
+    """Verify a matching Cognito subject on an email-matched profile is reused."""
+    cursor = MagicMock()
+    cursor.fetchone.side_effect = [None, {**USER, "external_auth_id": "subject"}]
+    monkeypatch.setattr(
+        main,
+        "cognito_api",
+        MagicMock(
+            return_value={
+                "UserAttributes": [
+                    {"Name": "email", "Value": USER["email"]},
+                    {"Name": "email_verified", "Value": "true"},
+                ]
+            }
+        ),
+    )
+
+    assert main.get_or_create_cognito_user(
+        {"user_id": "subject"}, "access-token", cursor
+    ) == {**USER, "external_auth_id": "subject"}
+
+
+@pytest.mark.parametrize(
+    ("update_result", "retry_result", "expected_user", "expected_status"),
+    [
+        (None, USER, USER, None),
+        (None, None, None, 409),
+    ],
+)
+def test_cognito_profile_link_race_is_resolved_or_rejected(
+    monkeypatch, update_result, retry_result, expected_user, expected_status
+):
+    """Verify a concurrent Cognito profile link is re-read and never silently lost."""
+    cursor = MagicMock()
+    cursor.fetchone.side_effect = [
+        None,
+        {**USER, "external_auth_id": None},
+        update_result,
+        retry_result,
+    ]
+    monkeypatch.setattr(
+        main,
+        "cognito_api",
+        MagicMock(
+            return_value={
+                "UserAttributes": [
+                    {"Name": "email", "Value": USER["email"]},
+                    {"Name": "email_verified", "Value": "true"},
+                ]
+            }
+        ),
+    )
+
+    if expected_status:
+        with pytest.raises(HTTPException) as error:
+            main.get_or_create_cognito_user({"user_id": "subject"}, "access-token", cursor)
+        assert error.value.status_code == expected_status
+    else:
+        assert main.get_or_create_cognito_user(
+            {"user_id": "subject"}, "access-token", cursor
+        ) == expected_user
+
+
+def test_cognito_profile_creates_a_new_local_user(monkeypatch):
+    """Verify a first-time Cognito subject gets a deterministic local username."""
+    cursor = MagicMock()
+    cursor.fetchone.side_effect = [
+        None,
+        None,
+        {"user_id": 14, "username": "cognito_subject123", "email": USER["email"]},
+    ]
+    monkeypatch.setattr(
+        main,
+        "cognito_api",
+        MagicMock(
+            return_value={
+                "UserAttributes": [
+                    {"Name": "email", "Value": USER["email"]},
+                    {"Name": "email_verified", "Value": "true"},
+                ]
+            }
+        ),
+    )
+
+    result = main.get_or_create_cognito_user(
+        {"user_id": "subject-123"}, "access-token", cursor
+    )
+
+    assert result["username"] == "cognito_subject123"
+    assert cursor.execute.call_args.args[1] == (
+        "cognito_subject123",
+        USER["email"],
+        "subject-123",
+    )
+
+
+@pytest.mark.parametrize(
+    ("code", "status_code"),
+    [
+        ("UsernameExistsException", 409),
+        ("CodeMismatchException", 400),
+        ("ExpiredCodeException", 400),
+        ("InvalidParameterException", 400),
+        ("InvalidPasswordException", 400),
+        ("NotAuthorizedException", 401),
+        ("UserNotFoundException", 401),
+        ("LimitExceededException", 429),
+        ("TooManyRequestsException", 429),
+        ("InternalErrorException", 502),
+    ],
+)
+def test_cognito_http_error_translates_provider_error_codes(code, status_code, caplog):
+    """Verify known Cognito errors map to stable HTTP statuses and unknown errors log."""
+    error = main.cognito_http_error(main.CognitoApiError(code))
+
+    assert error.status_code == status_code
+    if status_code == 502:
+        assert code in caplog.text
+
+
+@pytest.mark.parametrize("authentication", [None, {}, {"AccessToken": ""}])
+def test_cognito_tokens_rejects_incomplete_authentication(monkeypatch, authentication):
+    """Verify Cognito challenges without an access token are not treated as login success."""
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    monkeypatch.setattr(
+        main,
+        "cognito_api",
+        MagicMock(return_value={"AuthenticationResult": authentication}),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        main.cognito_tokens("reader@example.com", "password")
+    assert error.value.status_code == 409
+
+
+def test_cognito_tokens_omits_absent_refresh_token(monkeypatch):
+    """Verify optional refresh token fields are omitted when Cognito does not return one."""
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    monkeypatch.setattr(
+        main,
+        "cognito_api",
+        MagicMock(
+            return_value={
+                "AuthenticationResult": {
+                    "AccessToken": "access-token",
+                    "TokenType": "Token",
+                }
+            }
+        ),
+    )
+
+    assert main.cognito_tokens("reader@example.com", "password") == {
+        "access_token": "access-token",
+        "token_type": "token",
+        "expires_in": None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "body"),
+    [
+        (main.register_cognito, main.CognitoRegisterRequest(
+            email="reader@example.com", password="Valid!Password1"
+        )),
+        (main.confirm_cognito, main.CognitoConfirmRequest(
+            email="reader@example.com", confirmation_code="123456"
+        )),
+        (main.login_cognito, main.CognitoLoginRequest(
+            email="reader@example.com", password="Valid!Password1"
+        )),
+    ],
+)
+def test_cognito_endpoints_are_disabled_by_default(monkeypatch, endpoint, body):
+    """Verify each Cognito endpoint is explicitly disabled unless configured."""
+    monkeypatch.setenv("USE_COGNITO", "false")
+
+    with pytest.raises(HTTPException) as error:
+        endpoint(body)
+    assert error.value.status_code == 503
+
+
+def test_cognito_register_handles_provider_and_configuration_errors(monkeypatch):
+    """Verify Cognito registration maps service errors and missing configuration."""
+    monkeypatch.setenv("USE_COGNITO", "true")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    body = main.CognitoRegisterRequest(email=USER["email"], password="Valid!Password1")
+
+    for provider_error, expected_status in (
+        (main.CognitoApiError("UsernameExistsException"), 409),
+        (RuntimeError("Cognito unavailable"), 503),
+    ):
+        monkeypatch.setattr(main, "cognito_api", MagicMock(side_effect=provider_error))
+        with pytest.raises(HTTPException) as error:
+            main.register_cognito(body)
+        assert error.value.status_code == expected_status
+
+    monkeypatch.delenv("COGNITO_CLIENT_ID")
+    with pytest.raises(HTTPException) as error:
+        main.register_cognito(body)
+    assert error.value.status_code == 503
+
+
+def test_cognito_register_uses_default_email_delivery(monkeypatch):
+    """Verify sign-up remains successful when Cognito omits delivery metadata."""
+    monkeypatch.setenv("USE_COGNITO", "true")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    monkeypatch.setattr(main, "cognito_api", MagicMock(return_value={}))
+
+    assert main.register_cognito(
+        main.CognitoRegisterRequest(email=USER["email"], password="Valid!Password1")
+    )["delivery_medium"] == "EMAIL"
+
+
+def test_cognito_confirm_handles_success_provider_errors_and_configuration(monkeypatch):
+    """Verify Cognito email confirmation success and explicit error handling."""
+    monkeypatch.setenv("USE_COGNITO", "true")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    body = main.CognitoConfirmRequest(email=f" {USER['email']} ", confirmation_code=" 123456 ")
+    request = MagicMock(return_value={})
+    monkeypatch.setattr(main, "cognito_api", request)
+
+    assert main.confirm_cognito(body) == {
+        "message": "Email confirmed. Sign in with your email and password."
+    }
+    assert request.call_args.args[1]["Username"] == USER["email"]
+    assert request.call_args.args[1]["ConfirmationCode"] == "123456"
+
+    for provider_error, expected_status in (
+        (main.CognitoApiError("CodeMismatchException"), 400),
+        (RuntimeError("Cognito unavailable"), 503),
+    ):
+        monkeypatch.setattr(main, "cognito_api", MagicMock(side_effect=provider_error))
+        with pytest.raises(HTTPException) as error:
+            main.confirm_cognito(body)
+        assert error.value.status_code == expected_status
+
+    monkeypatch.delenv("COGNITO_CLIENT_ID")
+    with pytest.raises(HTTPException) as error:
+        main.confirm_cognito(body)
+    assert error.value.status_code == 503
+
+
+def test_cognito_login_maps_provider_and_configuration_errors(monkeypatch):
+    """Verify Cognito login returns HTTP errors for provider and configuration failures."""
+    monkeypatch.setenv("USE_COGNITO", "true")
+    body = main.CognitoLoginRequest(email=USER["email"], password="Valid!Password1")
+    monkeypatch.setattr(
+        main,
+        "cognito_tokens",
+        MagicMock(side_effect=main.CognitoApiError("NotAuthorizedException")),
+    )
+    with pytest.raises(HTTPException) as error:
+        main.login_cognito(body)
+    assert error.value.status_code == 401
+
+    monkeypatch.setattr(
+        main,
+        "cognito_tokens",
+        MagicMock(side_effect=RuntimeError("Cognito unavailable")),
+    )
+    with pytest.raises(HTTPException) as error:
+        main.login_cognito(body)
+    assert error.value.status_code == 503
+
+
+def test_cognito_register_request_rejects_invalid_email():
+    """Verify Cognito registration validates email before calling the provider."""
+    with pytest.raises(ValueError, match="valid email"):
+        main.CognitoRegisterRequest(email="not-an-email", password="Valid!Password1")
 
 
 def test_register_translates_unique_violation(monkeypatch):

@@ -8,16 +8,29 @@ data:
   DB_HOST: postgres
   DB_PORT: "5432"
   DB_NAME: digital_library
+  # Set to "true" and populate the pool and client IDs from Terraform outputs.
+  USE_COGNITO: "false"
+  AWS_REGION: us-east-1
+  COGNITO_USER_POOL_ID: ""
+  COGNITO_CLIENT_ID: ""
+  # Add the deployed frontend_url output here when deploying outside localhost.
+  ALLOWED_ORIGINS: "http://localhost:4200"
 ---
 # Runs the backend application and maintains its Pods.
+# The apiVersion is going to indicate the apps API group with v1 as the 
+# specific version and the kind being a Deployment. 
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend
 spec:
-  # A single replica is configured for this environment.
+  # A single replica is configured for this environment. It also means that
+  # we are going to want a single identical copy (Pod) of our application
+  # or service to run at any given time. 
   replicas: 1
   # Match this label against the Pod template so the Deployment manages its Pods.
+  # The app in the selector and the template is going to be for the application
+  # for the backend specifically.
   selector:
     matchLabels:
       app: backend
@@ -29,16 +42,24 @@ spec:
       containers:
         - name: backend
           # Use the locally built image; nodes may pull it if it is not cached.
+          # The image is known as the digital-library-backend:local as well. The
+          # imagePullPolicy is going to pull the image if the image is not present.
           image: digital-library-backend:local
           imagePullPolicy: IfNotPresent
           # The backend listens for HTTP requests on port 8000.
           ports:
             - containerPort: 8000
-          # Load database host, port, and name from the ConfigMap.
+          # Load database host, port, and name from the ConfigMap for the backend.
           envFrom:
             - configMapRef:
                 name: backend-config
           # Keep credentials and signing material in a Secret, not the ConfigMap.
+          # Note: A Secret is an object that contains a small amount of sensitive data
+          # such as a password, a toekn, or a key. Such information might otherwise
+          # be put in a Pod (a Pod represents a set of running containers in your cluster)
+          # specification or in a container image (stored instance of a container that holds
+          # a set of software needed to run an application). Using a Secret means 
+          #that you don't need to include confidential data in your application code. 
           env:
             - name: DB_USER
               valueFrom:
@@ -75,6 +96,22 @@ spec:
               memory: 512Mi
 ---
 # Exposes backend Pods inside the cluster on port 8000.
+# The apiVersion: v1 specifies that the manifest uses the
+# core (legacy/unnamed) API group's first stable version.
+# The Service is going to give the backend a stable network
+# address inside the cluster. Pods can be replaced and their
+# IP addresses can change; the Service keeps a consistent name
+# and routes traffic to the currently healthy matching Pods
+# Also to note, since there's no type specified, Kubernetes is going to default
+# the type to ClusterIP: the backend is reachable inside the cluster
+# at backend: 8000. It's not intended to expose the backend directly to 
+# the public internet; an Ingress or another external-access mechanism
+# can provide that if needed. We would need a stable network because 
+# Pods are temporary. If Kubernetes restarts or reschedules the backend Pod, it
+# may get a different IP. Without a service, the frontend would need to discover
+# that new IP and update its connection settings. The Service keeps a consistent
+# in-cluster name -- backend -- and forwards requests to the current matching
+# Pod. 
 apiVersion: v1
 kind: Service
 metadata:
