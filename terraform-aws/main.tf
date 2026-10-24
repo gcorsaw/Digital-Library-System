@@ -22,9 +22,7 @@ data "aws_cloudfront_origin_request_policy" "api_forward_viewer_except_host" {
   name = "Managed-AllViewerExceptHostHeader"
 }
 
-# ==========================================
-# NETWORKING STRATEGY LAYERS (VPC BLOCK)
-# ==========================================
+# VPC, public subnets, and internet routing for the load balancer.
 
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
@@ -70,9 +68,7 @@ resource "aws_route_table_association" "b" {
   route_table_id = aws_route_table.public_rt.id
 }
 
-# ==========================================
-# SECURITY GROUP POLICIES
-# ==========================================
+# Public HTTP/HTTPS access to the load balancer.
 
 resource "aws_security_group" "lb_sg" {
   name        = "load-balancer-security-rules"
@@ -101,9 +97,7 @@ resource "aws_security_group" "lb_sg" {
   }
 }
 
-# ==========================================
-# APPLICATION LOAD BALANCER COMPONENT
-# ==========================================
+# Routes API traffic to backend instances on port 8000.
 
 resource "aws_alb" "external_lb" {
   name               = "library-routing-proxy-balancer"
@@ -179,9 +173,7 @@ resource "aws_lb_listener" "https_entry" {
   }
 }
 
-# ==========================================
-# AWS COGNITO SECURE VERIFICATION SYSTEMS
-# ==========================================
+# Cognito user pool and public application client.
 
 resource "aws_cognito_user_pool" "library_pool" {
   name = "digital-library-cognito-pool"
@@ -213,9 +205,7 @@ resource "aws_cognito_user_pool_client" "library_client" {
   prevent_user_existence_errors = "ENABLED"
 }
 
-# ==========================================
-# S3 FRONTEND BUCKET LAYER
-# ==========================================
+# Private S3 bucket for frontend assets.
 
 resource "aws_s3_bucket" "frontend" {
   bucket = var.frontend_bucket_name
@@ -230,9 +220,7 @@ resource "aws_s3_bucket_public_access_block" "block_public" {
   restrict_public_buckets = true
 }
 
-# ==========================================
-# CLOUDFRONT DISTRIBUTION SETUP
-# ==========================================
+# CloudFront serves the frontend and optionally proxies API requests.
 
 resource "aws_cloudfront_origin_access_control" "oac" {
   name                              = "frontend-s3-oac"
@@ -323,7 +311,7 @@ resource "aws_cloudfront_distribution" "cdn" {
   tags = { Environment = "Production" }
 }
 
-# S3 Policy linking distribution connection tunnels together smoothly
+# Allow this CloudFront distribution to read frontend objects from S3.
 resource "aws_s3_bucket_policy" "allow_cloudfront" {
   bucket = aws_s3_bucket.frontend.id
   policy = jsonencode({

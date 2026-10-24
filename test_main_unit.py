@@ -27,7 +27,6 @@ USER = {"user_id": 7, "username": "reader", "email": "reader@example.com"}
 TOKEN_SECRET = "unit-test-secret-that-is-long-enough-32"
 
 
-
 def test_get_env_strips_values_and_defaults_port(monkeypatch):
     """Verify environment values are trimmed and DB_PORT defaults when unset."""
     monkeypatch.setenv("DB_HOST", "  db.example  ")
@@ -557,6 +556,7 @@ def test_lifespan_initializes_and_closes_database_pool(monkeypatch):
     monkeypatch.setattr(main.db_manager, "close_pool", close)
 
     async def run_lifespan():
+        """Run the app lifespan to check startup and shutdown behavior."""
         async with main.lifespan(main.library_app):
             initialize.assert_called_once_with()
             close.assert_not_called()
@@ -1975,6 +1975,7 @@ def test_main_entrypoint_runs_with_optional_dotenv_and_mocked_database(monkeypat
     original_import = builtins.__import__
 
     def import_without_dotenv(name, *args, **kwargs):
+        """Simulate dotenv being unavailable while preserving other imports."""
         if name == "dotenv":
             raise ImportError("dotenv unavailable")
         return original_import(name, *args, **kwargs)
