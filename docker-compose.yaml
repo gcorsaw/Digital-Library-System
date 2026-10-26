@@ -27,6 +27,7 @@ services:
       - cognito_data:/app/.cognito
     environment:
       - PORT=9229
+      - CODE=${COGNITO_LOCAL_CODE:-123456}
 
   # This job triggers automatically on "docker compose up" to create your pool IDs
   cognito-init:
@@ -58,11 +59,12 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
-      USE_COGNITO: "true"
-      AWS_REGION: us-east-1
-      # Send all Cognito calls to the local emulator instead of AWS
-      AWS_COGNITO_ENDPOINT: http://cognito-local:9229
-      COGNITO_LOCAL_ISSUER: http://localhost:9229
+      USE_COGNITO: ${USE_COGNITO:-true}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      # Set AWS_COGNITO_ENDPOINT to an empty value in .env to use AWS Cognito.
+      AWS_COGNITO_ENDPOINT: ${AWS_COGNITO_ENDPOINT-http://cognito-local:9229}
+      COGNITO_LOCAL_ISSUER: ${COGNITO_LOCAL_ISSUER-http://localhost:9229}
+      COGNITO_LOCAL_CODE: ${COGNITO_LOCAL_CODE:-123456}
       # Printed by the cognito-init container; put them in .env
       COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-}
       COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-}

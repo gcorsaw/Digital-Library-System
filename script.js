@@ -140,6 +140,7 @@ function saveAuthSession(data, username) {
 
 if (signupBtn) {
   signupBtn.addEventListener("click", async () => {
+    let errorStage = "Registration";
     try {
       const provider = prompt("Create account with 1) Local account or 2) Amazon Cognito? Enter 1 or 2:");
       if (!provider) return;
@@ -163,11 +164,13 @@ if (signupBtn) {
           return;
         }
 
+        errorStage = "Confirmation";
         await postAuthRequest(
           "/auth/cognito/confirm",
           { email, confirmation_code: confirmationCode },
           "Cognito email confirmation failed"
         );
+        errorStage = "Sign-in";
         const tokenData = await postAuthRequest(
           "/auth/cognito/login",
           { email, password },
@@ -198,7 +201,7 @@ if (signupBtn) {
       saveAuthSession(data, data.user.username);
       alert(`Welcome to your digital library, ${currentUsername}! Account created successfully.`);
     } catch (err) {
-      alert(`Registration Error: ${err instanceof Error ? err.message : "An unexpected error occurred."}`);
+      alert(`${errorStage} Error: ${err instanceof Error ? err.message : "An unexpected error occurred."}`);
     }
   });
 }

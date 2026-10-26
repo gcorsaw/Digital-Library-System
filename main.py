@@ -1,7 +1,5 @@
 # main.py
-import os
 import re
-import jwt
 import logging
 import uvicorn
 import psycopg2
@@ -9,8 +7,10 @@ import requests
 from datetime import datetime, timedelta, timezone, date
 from typing import List, Optional, Generator
 from pathlib import Path
-from fastapi import FastAPI, Depends, HTTPException, status, Query
 from fastapi.middleware.cors import CORSMiddleware
+import os
+import jwt
+from fastapi import FastAPI, Depends, HTTPException, Query, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, field_validator, model_validator
 from contextlib import asynccontextmanager
@@ -562,9 +562,17 @@ def cognito_http_error(error: CognitoApiError) -> HTTPException:
     """Translate Cognito errors into stable API responses without exposing provider details."""
     if error.code == "UsernameExistsException":
         return HTTPException(status_code=409, detail="An account with this email already exists.")
+    if error.code == "CodeMismatchException":
+        return HTTPException(
+            status_code=400,
+            detail="Incorrect confirmation code. Use the latest code for this same email address.",
+        )
+    if error.code == "ExpiredCodeException":
+        return HTTPException(
+            status_code=400,
+            detail="The confirmation code has expired. A new code must be issued before confirming.",
+        )
     if error.code in {
-        "CodeMismatchException",
-        "ExpiredCodeException",
         "InvalidParameterException",
         "InvalidPasswordException",
     }:
@@ -625,8 +633,12 @@ def register_cognito(body: CognitoRegisterRequest):
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     delivery = result.get("CodeDeliveryDetails", {})
+    message = "Check your email for a Cognito confirmation code."
+    local_code = os.getenv("COGNITO_LOCAL_CODE", "").strip()
+    if COGNITO_ENDPOINT and local_code:
+        message = f"Local Cognito confirmation code: {local_code}"
     return {
-        "message": "Check your email for a Cognito confirmation code.",
+        "message": message,
         "delivery_medium": delivery.get("DeliveryMedium", "EMAIL"),
     }
 

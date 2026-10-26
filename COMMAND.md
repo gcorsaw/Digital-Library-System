@@ -87,6 +87,70 @@ authenticated request for an existing account; the existing shared catalog is
 not copied or deleted. The backend database role must have permission to create
 schemas.
 
+## Switch Cognito from local to AWS
+
+This keeps the Compose-hosted frontend, backend, and database in place; only
+the Cognito provider changes. You need an AWS user pool and a public app client
+in the same region. The client must have no client secret and allow
+`ALLOW_USER_PASSWORD_AUTH`; the pool must have email verification enabled.
+
+Set the Cognito values in the repository-root `.env`. Leave the AWS endpoint
+empty so the backend uses AWS rather than the local emulator:
+
+```dotenv
+USE_COGNITO=true
+AWS_REGION=<aws-region>
+AWS_COGNITO_ENDPOINT=
+COGNITO_USER_POOL_ID=<aws-user-pool-id>
+COGNITO_CLIENT_ID=<aws-app-client-id>
+```
+
+Recreate the backend to load the values, then check its health:
+
+```bash
+docker compose up -d --build --force-recreate backend
+docker compose ps backend
+curl -i http://localhost:8001/health
+```
+
+Register through the app at <http://localhost:8080>. AWS sends the confirmation
+code through the pool's configured email delivery; the local development code
+is not returned in AWS mode. Keep AWS credentials out of `.env` when using the
+local backend; use the AWS CLI's standard credential chain or an AWS profile
+for Terraform.
+
+### Provision a Cognito pool with this repository's Terraform
+
+The `terraform-aws/` module provisions a Cognito pool and app client but also
+creates VPC, load-balancer, S3, and CloudFront resources. Review the complete
+plan and AWS costs before applying. It does not deploy the backend or database.
+If you already have the module provisioned, skip `apply` and read the existing
+outputs instead.
+
+Run from the repository root, replacing the bucket name with a globally unique
+name:
+
+```bash
+terraform -chdir=terraform-aws init
+terraform -chdir=terraform-aws plan \
+  -var="frontend_bucket_name=<globally-unique-bucket-name>"
+terraform -chdir=terraform-aws apply \
+  -var="frontend_bucket_name=<globally-unique-bucket-name>"
+```
+
+After applying, retrieve the non-secret Cognito settings and copy them into the
+root `.env` as shown above:
+
+```bash
+terraform -chdir=terraform-aws output -raw aws_region
+terraform -chdir=terraform-aws output -raw cognito_user_pool_id
+terraform -chdir=terraform-aws output -raw cognito_client_id
+```
+
+To switch back to Cognito Local, restore
+`AWS_COGNITO_ENDPOINT=http://cognito-local:9229` in `.env` and recreate the
+backend.
+
 ## Everyday commands
 
 Follow logs from all services:

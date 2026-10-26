@@ -23,6 +23,33 @@ To apply frontend or Nginx configuration changes, recreate the web service:
 docker compose up -d --force-recreate web_ui
 ```
 
+## Cognito modes
+
+Compose defaults to Cognito Local. Its development confirmation code is
+`123456`, and local registration responses display it to the tester.
+
+To use AWS Cognito, provision a user pool and public app client, then set these
+values in `.env`:
+
+```dotenv
+USE_COGNITO=true
+AWS_REGION=us-east-1
+AWS_COGNITO_ENDPOINT=
+COGNITO_USER_POOL_ID=<aws-user-pool-id>
+COGNITO_CLIENT_ID=<aws-app-client-id>
+```
+
+The AWS app client must have no client secret and allow
+`ALLOW_USER_PASSWORD_AUTH`; configure email verification on the user pool.
+Restart the backend after changing `.env`:
+
+```bash
+docker compose up -d --build --force-recreate backend
+```
+
+When `AWS_COGNITO_ENDPOINT` is empty, the backend uses AWS Cognito and does not
+return the local development confirmation code.
+
 This project was generated with [Angular CLI](https://github.com/angular/angular-cli) version 17.3.17.
 
 ## Development server
