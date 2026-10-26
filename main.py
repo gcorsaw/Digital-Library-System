@@ -19,12 +19,22 @@ from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError, InvalidHashError
+import os
+import boto
 
 # Initialize dotenv manually if needed or fallback safely
 _COGNITO_JWKS = None
 COGNITO_ISSUER_PREFIX = "https://cognito-idp."
+cognito_endpoint = os.getenv("AWS_COGNITO_ENDPOINT")
 
-
+cognito_client = boto3.client(
+    "cognito-idp",
+    region_name=os.getenv("AWS_REGION", "local"),
+    # This line redirects the Python backend to the local Docker container
+    endpoint_url=cognito_endpoint if cognito_endpoint else None,
+    aws_access_key_id="mock_key",
+    aws_secret_access_key="mock_secret"
+)
 class CognitoApiError(Exception):
     """Represent an error returned by the Cognito user-pool API."""
 
