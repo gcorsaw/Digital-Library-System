@@ -1,44 +1,32 @@
-import { Injectable } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
+import { Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
-
-declare global {
-  interface Window {
-    DIGITAL_LIBRARY_API_URL?: string;
-  }
-}
-
-export interface BookResponse {
-  message?: string;
-  books?: Array<Record<string, unknown>>;
-}
 
 export interface AuthTokenResponse {
   access_token: string;
   token_type: string;
   expires_in?: number;
   refresh_token?: string;
-  user?: Record<string, unknown>;
 }
 
-@Injectable({
-  providedIn: 'root'
-})
-export class ApiserviceService {
-  private readonly apiUrl =
-    typeof window !== 'undefined' && window.DIGITAL_LIBRARY_API_URL
-      ? window.DIGITAL_LIBRARY_API_URL
-      : 'http://localhost:8000';
-  constructor(private http: HttpClient) {}
+export interface AuthMessageResponse {
+  message: string;
+  delivery_medium?: string;
+}
 
-  getBooks(): Observable<BookResponse> {
-    return this.http.get<BookResponse>(`${this.apiUrl}/books`, {
-      headers: this.authorizationHeaders()
-    });
-  }
+export interface BooksResponse {
+  books: Array<Record<string, unknown>>;
+}
+
+@Injectable({ providedIn: 'root' })
+export class ApiserviceService {
+  private readonly apiBaseUrl = 'http://localhost:8001';
+  private readonly accessTokenKey = 'library_access_token';
+
+  constructor(private readonly http: HttpClient) {}
 
   registerNative(username: string, email: string, password: string): Observable<AuthTokenResponse> {
-    return this.http.post<AuthTokenResponse>(`${this.apiUrl}/auth/register`, {
+    return this.http.post<AuthTokenResponse>(`${this.apiBaseUrl}/auth/register`, {
       username,
       email,
       password
@@ -46,53 +34,61 @@ export class ApiserviceService {
   }
 
   loginNative(username: string, password: string): Observable<AuthTokenResponse> {
-    return this.http.post<AuthTokenResponse>(`${this.apiUrl}/auth/login`, {
+    return this.http.post<AuthTokenResponse>(`${this.apiBaseUrl}/auth/login`, {
       username,
       password
     });
   }
 
-  registerCognito(email: string, password: string): Observable<{ message: string }> {
-    return this.http.post<{ message: string }>(`${this.apiUrl}/auth/cognito/register`, {
+  registerCognito(email: string, password: string): Observable<AuthMessageResponse> {
+    return this.http.post<AuthMessageResponse>(`${this.apiBaseUrl}/auth/cognito/register`, {
       email,
       password
     });
   }
 
-  confirmCognito(email: string, confirmation_code: string): Observable<{ message: string }> {
-    return this.http.post<{ message: string }>(`${this.apiUrl}/auth/cognito/confirm`, {
+  confirmCognito(email: string, confirmationCode: string): Observable<AuthMessageResponse> {
+    return this.http.post<AuthMessageResponse>(`${this.apiBaseUrl}/auth/cognito/confirm`, {
       email,
-      confirmation_code
+      confirmation_code: confirmationCode
     });
   }
 
   loginCognito(email: string, password: string): Observable<AuthTokenResponse> {
-    return this.http.post<AuthTokenResponse>(`${this.apiUrl}/auth/cognito/login`, {
+    return this.http.post<AuthTokenResponse>(`${this.apiBaseUrl}/auth/cognito/login`, {
       email,
       password
     });
   }
 
-  saveAccessToken(token: string): void {
-    if (typeof sessionStorage !== 'undefined') {
-      sessionStorage.setItem('access_token', token);
-    }
+  getBooks(): Observable<BooksResponse> {
+    const token = this.getAccessToken();
+    const headers = token
+      ? new HttpHeaders({ Authorization: `Bearer ${token}` })
+      : new HttpHeaders();
+
+    return this.http.get<BooksResponse>(`${this.apiBaseUrl}/books`, { headers });
   }
 
   hasAccessToken(): boolean {
-    return typeof sessionStorage !== 'undefined' && !!sessionStorage.getItem('access_token');
+    return this.getAccessToken() !== null;
   }
 
-  clearAccessToken(): void {
-    if (typeof sessionStorage !== 'undefined') {
-      sessionStorage.removeItem('access_token');
+  saveAccessToken(token: string): void {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(this.accessTokenKey, token);
     }
   }
 
-  private authorizationHeaders(): HttpHeaders {
-    const token = typeof sessionStorage === 'undefined'
+  clearAccessToken(): void {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(this.accessTokenKey);
+    }
+  }
+
+  private getAccessToken(): string | null {
+    return typeof localStorage === 'undefined'
       ? null
-      : sessionStorage.getItem('access_token');
-    return token ? new HttpHeaders({ Authorization: `Bearer ${token}` }) : new HttpHeaders();
+      : localStorage.getItem(this.accessTokenKey);
   }
 }
