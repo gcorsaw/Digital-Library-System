@@ -19,22 +19,19 @@ from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError, InvalidHashError
-import os
-import boto
 
 # Initialize dotenv manually if needed or fallback safely
 _COGNITO_JWKS = None
 COGNITO_ISSUER_PREFIX = "https://cognito-idp."
 cognito_endpoint = os.getenv("AWS_COGNITO_ENDPOINT")
 
-cognito_client = boto3.client(
-    "cognito-idp",
-    region_name=os.getenv("AWS_REGION", "local"),
-    # This line redirects the Python backend to the local Docker container
-    endpoint_url=cognito_endpoint if cognito_endpoint else None,
-    aws_access_key_id="mock_key",
-    aws_secret_access_key="mock_secret"
-)
+# When set (e.g. http://cognito-local:9229), all Cognito calls go to the local
+# emulator instead of the real AWS endpoint.
+COGNITO_ENDPOINT = os.getenv("AWS_COGNITO_ENDPOINT", "").strip()
+# cognito-local stamps tokens with this issuer base, regardless of the Docker hostname.
+COGNITO_LOCAL_ISSUER = os.getenv("COGNITO_LOCAL_ISSUER", "http://localhost:9229").strip()
+
+
 class CognitoApiError(Exception):
     """Represent an error returned by the Cognito user-pool API."""
 
@@ -55,12 +52,33 @@ def cognito_configuration():
     return region, user_pool_id, client_id
 
 
+def cognito_api_url(region: str) -> str:
+    """Return the Cognito API URL: the local emulator if configured, otherwise AWS."""
+    if COGNITO_ENDPOINT:
+        return COGNITO_ENDPOINT.rstrip("/") + "/"
+    return f"https://cognito-idp.{region}.amazonaws.com/"
+
+
+def cognito_issuer(region: str, user_pool_id: str) -> str:
+    """Return the token issuer expected for the configured user pool."""
+    if COGNITO_ENDPOINT:
+        return f"{COGNITO_LOCAL_ISSUER.rstrip('/')}/{user_pool_id}"
+    return f"https://cognito-idp.{region}.amazonaws.com/{user_pool_id}"
+
+
+def cognito_jwks_url(region: str, user_pool_id: str) -> str:
+    """Return the URL that serves the pool's signing keys."""
+    if COGNITO_ENDPOINT:
+        return f"{COGNITO_ENDPOINT.rstrip('/')}/{user_pool_id}/.well-known/jwks.json"
+    return f"https://cognito-idp.{region}.amazonaws.com/{user_pool_id}/.well-known/jwks.json"
+
+
 def cognito_api(target: str, payload: dict) -> dict:
     """Call a public Cognito user-pool API operation over HTTPS."""
     region, _, _ = cognito_configuration()
     try:
         response = requests.post(
-            f"https://cognito-idp.{region}.amazonaws.com/",
+            cognito_api_url(region),
             headers={
                 "Content-Type": "application/x-amz-json-1.1",
                 "X-Amz-Target": f"AWSCognitoIdentityProviderService.{target}",
@@ -101,7 +119,7 @@ def get_cognito_public_keys(force_refresh: bool = False):
     global _COGNITO_JWKS
     if _COGNITO_JWKS is None or force_refresh:
         region, user_pool_id, _ = cognito_configuration()
-        url = f"https://cognito-idp.{region}.amazonaws.com/{user_pool_id}/.well-known/jwks.json"
+        url = cognito_jwks_url(region, user_pool_id)
         try:
             response = requests.get(url, timeout=5)
             response.raise_for_status()
@@ -300,11 +318,13 @@ def decode_bearer_token(token: str) -> dict:
         unverified_payload = jwt.decode(token, options={"verify_signature": False})
         issuer = unverified_payload.get("iss", "")
 
-        if issuer.startswith(COGNITO_ISSUER_PREFIX):
+        if issuer.startswith(COGNITO_ISSUER_PREFIX) or (
+            COGNITO_ENDPOINT and issuer.startswith(COGNITO_LOCAL_ISSUER)
+        ):
             if os.getenv("USE_COGNITO", "false").lower() != "true":
                 raise jwt.PyJWTError("Cognito authentication is disabled")
             region, user_pool_id, client_id = cognito_configuration()
-            expected_issuer = f"https://cognito-idp.{region}.amazonaws.com/{user_pool_id}"
+            expected_issuer = cognito_issuer(region, user_pool_id)
             if issuer != expected_issuer:
                 raise jwt.PyJWTError("Token issuer does not match the configured Cognito user pool")
 
