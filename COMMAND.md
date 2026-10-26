@@ -204,6 +204,118 @@ Start it again later:
 docker compose up -d
 ```
 
+## Deploy through GitHub Actions on this computer
+
+The workflow in `.github/workflows/deploy.yml` runs tests and builds images on
+GitHub-hosted runners. On a push to `main`, it deploys with Docker Compose on
+your Linux self-hosted runner. The app is served at
+<http://localhost:8080>; the API health endpoint is
+<http://localhost:8001/health>. This is a personal/development deployment:
+the computer must remain on, online, and able to run Docker.
+
+### Configure the runner
+
+Register a Linux runner for this repository in **GitHub → Settings → Actions
+→ Runners → New self-hosted runner**. Follow the commands GitHub shows; do not
+share the temporary registration token. The workflow expects runner labels
+`self-hosted`, `linux`, and `x64`.
+
+Run the runner in the foreground from its installation directory, for example:
+
+```bash
+cd "$HOME/Digital-Library-System/actions-runner"
+./run.sh
+```
+
+Keep that terminal open while waiting for jobs. Alternatively, install it as a
+service so it can run without an open terminal. If `./run.sh` is currently
+running, stop it with Ctrl+C before installing the service:
+
+```bash
+cd "$HOME/Digital-Library-System/actions-runner"
+sudo ./svc.sh install
+sudo ./svc.sh start
+sudo ./svc.sh status
+```
+
+The runner account must be able to run `docker compose` without an interactive
+sudo prompt. Confirm this from the repository root:
+
+```bash
+cd "$HOME/Digital-Library-System"
+docker compose version
+docker ps
+```
+
+Treat a self-hosted runner as privileged: it can execute workflow commands on
+your computer. Only run trusted repository workflows on it, and do not run
+untrusted pull-request jobs on this runner.
+
+### Add deployment secrets to GitHub
+
+Create the `production` environment under **GitHub → Settings → Environments**
+if it does not exist. Add environment secrets named `DB_USER`, `DB_PASSWORD`,
+and `JWT_SECRET_KEY`. Their values must match the PostgreSQL credentials used
+by this app's Compose configuration. The JWT key must be at least 32 characters.
+For an existing database volume, use the same database user and password that
+were set when that database was initialized.
+
+You can add each value interactively with GitHub CLI, avoiding secret values in
+shell history:
+
+```bash
+gh auth status
+gh secret set DB_USER --env production
+gh secret set DB_PASSWORD --env production
+gh secret set JWT_SECRET_KEY --env production
+```
+
+Enter the secret value when prompted. Do not put real credentials into this
+file, the workflow YAML, or a Git commit. `KUBE_CONFIG` is not used for this
+Docker Compose deployment.
+
+### Trigger and monitor a deployment
+
+After the workflow changes and secrets are configured, commit and push to
+`main` (or merge a pull request into `main`). The workflow runs tests first;
+the self-hosted deploy job starts only after they pass.
+
+```bash
+cd "$HOME/Digital-Library-System"
+git status
+git add .github/workflows/deploy.yml .gitignore README.md COMMAND.md test_main_unit.py
+git commit -m "Document self-hosted Compose deployment"
+git push origin main
+```
+
+Keep the runner online, then monitor the run in the repository's **Actions**
+tab. With GitHub CLI, list and watch runs with:
+
+```bash
+gh run list --workflow deploy.yml
+gh run watch
+```
+
+After a successful deploy, verify the app:
+
+```bash
+docker compose ps
+curl --fail --show-error http://localhost:8080/
+curl --fail --show-error http://localhost:8001/health
+```
+
+If the deploy fails, inspect the failed workflow step in Actions and check
+service logs from the repository root:
+
+```bash
+docker compose logs --tail=100 backend
+docker compose logs --tail=100 my_postgres_db
+```
+
+The workflow runs the test and image-build jobs for pull requests on GitHub's
+hosted runners, not on your self-hosted machine. It deploys only after a push
+to `main`.
+
 ## Run on Kubernetes with Kustomize
 
 These commands deploy the manifests in `k8s/` instead of using Docker Compose.
