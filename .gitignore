@@ -45,3 +45,6 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Self-hosted GitHub Actions runner credentials and binaries
+/actions-runner/

@@ -75,3 +75,25 @@ Run `ng e2e` to execute the end-to-end tests via a platform of your choice. To u
 ## Further help
 
 To get more help on the Angular CLI use `ng help` or go check out the [Angular CLI Overview and Command Reference](https://angular.io/cli) page.
+
+## GitHub Actions deployment
+
+`.github/workflows/deploy.yml` runs backend tests and builds the container
+images on pull requests. After changes are merged to `main`, it deploys the
+application with Docker Compose on a self-hosted GitHub Actions runner and
+checks the frontend and backend health endpoint.
+
+Before enabling deployment:
+
+1. Register a Linux self-hosted runner with the `self-hosted`, `linux`, and
+   `x64` labels, and ensure its account can run Docker Compose.
+2. Configure the GitHub `production` environment with `DB_USER`, `DB_PASSWORD`,
+   and `JWT_SECRET_KEY` secrets. The signing key must be at least 32 characters.
+3. Keep the runner online for deployments. The app runs on that computer at
+   `http://localhost:8080`; the backend health endpoint is at
+   `http://localhost:8001/health`.
+
+The deploy job only runs after pushes to `main`, not for pull requests. A
+self-hosted runner can execute repository workflows on its machine, so only
+use it with trusted workflows and protect the `main` branch. The workflow
+deploys the root-level static frontend, not the separate Angular application.

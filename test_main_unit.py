@@ -745,6 +745,56 @@ def test_register_cognito_requests_email_confirmation(monkeypatch):
     )
 
 
+def test_register_cognito_returns_local_confirmation_code(monkeypatch):
+    """Verify the local emulator confirmation code is included when configured."""
+    monkeypatch.setenv("USE_COGNITO", "true")
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", "pool-123")
+    monkeypatch.setenv("COGNITO_CLIENT_ID", "client-456")
+    monkeypatch.setenv("COGNITO_LOCAL_CODE", "123456")
+    monkeypatch.setattr(main, "COGNITO_ENDPOINT", "http://localhost:9229")
+    monkeypatch.setattr(main, "cognito_api", MagicMock(return_value={}))
+
+    result = main.register_cognito(
+        main.CognitoRegisterRequest(
+            email="reader@example.com",
+            password="Valid!Password1",
+        )
+    )
+
+    assert result["message"] == "Local Cognito confirmation code: 123456"
+    assert result["delivery_medium"] == "EMAIL"
+
+
+def test_cognito_urls_use_aws_when_local_endpoint_is_not_configured(monkeypatch):
+    """Verify Cognito endpoints use regional AWS URLs outside local development."""
+    monkeypatch.setattr(main, "COGNITO_ENDPOINT", "")
+
+    assert main.cognito_api_url("us-west-2") == (
+        "https://cognito-idp.us-west-2.amazonaws.com/"
+    )
+    assert main.cognito_issuer("us-west-2", "pool-123") == (
+        "https://cognito-idp.us-west-2.amazonaws.com/pool-123"
+    )
+    assert main.cognito_jwks_url("us-west-2", "pool-123") == (
+        "https://cognito-idp.us-west-2.amazonaws.com/pool-123/.well-known/jwks.json"
+    )
+
+
+def test_cognito_urls_use_local_endpoint_when_configured(monkeypatch):
+    """Verify local Cognito URLs use the emulator endpoint and issuer."""
+    monkeypatch.setattr(main, "COGNITO_ENDPOINT", "http://localhost:9229/")
+    monkeypatch.setattr(main, "COGNITO_LOCAL_ISSUER", "http://localhost:9229/")
+
+    assert main.cognito_api_url("us-west-2") == "http://localhost:9229/"
+    assert main.cognito_issuer("us-west-2", "pool-123") == (
+        "http://localhost:9229/pool-123"
+    )
+    assert main.cognito_jwks_url("us-west-2", "pool-123") == (
+        "http://localhost:9229/pool-123/.well-known/jwks.json"
+    )
+
+
 def test_cognito_login_returns_access_token(monkeypatch):
     """Verify Cognito login returns its API access token without replacing native login."""
     monkeypatch.setenv("USE_COGNITO", "true")

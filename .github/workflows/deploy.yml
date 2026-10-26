@@ -1,0 +1,108 @@
+name: Build and deploy
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_NAME: digital_library_test
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      JWT_SECRET_KEY: test-only-secret-key-that-is-32-chars-or-more
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-groups
+
+      - name: Run backend tests
+        run: uv run pytest
+
+      - name: Build container images
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.backend
+          push: false
+          tags: digital-library-backend:${{ github.sha }}
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.frontend
+          push: false
+          tags: digital-library-frontend:${{ github.sha }}
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: test
+    runs-on: [self-hosted, linux, x64]
+    environment: production
+    env:
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      DB_NAME: digital_library
+      JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+      USE_COGNITO: "false"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        run: |
+          test -n "$DB_USER" || { echo "GitHub environment secret DB_USER is required"; exit 1; }
+          test -n "$DB_PASSWORD" || { echo "GitHub environment secret DB_PASSWORD is required"; exit 1; }
+          test -n "$JWT_SECRET_KEY" || { echo "GitHub environment secret JWT_SECRET_KEY is required"; exit 1; }
+          test "${#JWT_SECRET_KEY}" -ge 32 || { echo "JWT_SECRET_KEY must be at least 32 characters"; exit 1; }
+          docker compose config --quiet
+
+      - name: Start or update the app
+        run: docker compose up --build --detach --remove-orphans
+
+      - name: Check deployed services
+        run: |
+          docker compose ps
+          curl --fail --silent --show-error --retry 20 --retry-delay 2 \
+            --retry-connrefused http://127.0.0.1:8080/
+          curl --fail --silent --show-error --retry 20 --retry-delay 2 \
+            --retry-connrefused http://127.0.0.1:8001/health
