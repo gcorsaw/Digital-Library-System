@@ -1,17 +1,16 @@
 {
-  "family": "digital-library-backend",
-  "networkMode": "awsvpc",
-  "requiresCompatibilities": ["FARGATE"],
-  "cpu": "512",
-  "memory": "1024",
-  "executionRoleArn": "arn:aws:iam::957076202146:role/ecsTaskExecutionRole",
+  "family": "backend-task",
   "containerDefinitions": [
     {
       "name": "backend",
-      "image": "957076202146.dkr.ecr.us-east-2.amazonaws.com/gcorsaw/digital_library_system:backend-latest",
+      "image": "YOUR_ECR_REPOSITORY_URL/backend:latest",
+      "cpu": 256,
+      "memory": 512,
+      "essential": true,
       "portMappings": [
         {
-          "containerPort": 8000,
+          "containerPort": 5000,
+          "hostPort": 5000,
           "protocol": "tcp"
         }
       ],
@@ -19,9 +18,21 @@
         { "name": "AUTH_PROVIDER", "value": "COGNITO" },
         { "name": "AWS_REGION", "value": "us-east-1" },
         { "name": "COGNITO_USER_POOL_ID", "value": "us-east-1_xxxxxxxxx" },
-        { "name": "JWT_SECRET", "value": "your_fallback_local_secret" }
-    ],
-      "essential": true
+        { "name": "JWT_SECRET", "value": "your_local_secret_fallback_key" },
+        { "name": "API_BASE_URL", "value": "http://localhost:5000" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/backend-task",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "backend"
+        }
+      }
     }
-  ]
+  ],
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "256",
+  "memory": "512"
 }
