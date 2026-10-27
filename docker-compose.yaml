@@ -11,9 +11,10 @@ services:
       - "5440:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./digital-library-system.sql:/docker-entrypoint-initdb.d/init.sql
-    # FIXED: Re-indented the initialization wrapper sequence using clean standard strings
-    entrypoint: 
+      # Map schema file into a sequential slot
+      - ./digital-library-system.sql:/docker-entrypoint-initdb.d/01_tables.sql
+    # Automatically pre-loads the citext extension inside your database
+    entrypoint:
       - "bash"
       - "-c"
       - |
@@ -36,7 +37,6 @@ services:
       - PORT=9229
       - CODE=${COGNITO_LOCAL_CODE:-123456}
 
-  # This job triggers automatically on "docker compose up" to create your pool IDs
   cognito-init:
     build:
       context: .
