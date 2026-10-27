@@ -173,7 +173,7 @@ class DatabaseManager:
                 password=get_env("DB_PASSWORD"),
                 host=get_env("DB_HOST"),
                 port=int(get_env("DB_PORT")),
-                sslmode="require"
+                sslmode=os.getenv("DB_SSLMODE", "prefer")
             )
         except Exception as error:
             print(error)
@@ -734,7 +734,7 @@ def connect():
             password=get_env("DB_PASSWORD"),
             host=get_env("DB_HOST"),
             port=int(get_env("DB_PORT")),
-                sslmode="require"
+                sslmode=os.getenv("DB_SSLMODE", "prefer")
         )
         cursor = connection.cursor()
         print("PostgreSQL database version:")
