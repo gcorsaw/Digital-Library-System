@@ -1,0 +1,26 @@
+{
+  "family": "digital-library-backend",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::957076202146:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "backend",
+      "image": "957076202146.dkr.ecr.us-east-2.amazonaws.com/gcorsaw/digital_library_system:backend-latest",
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "COGNITO_USER_POOL_ID", "value": "us-east-2_omarHQg9c" },
+	{ "name": "COGNITO_CLIENT_ID", "value": "4bqpsi87g6bpfcsgjpfl4vd2n3" },
+        { "name": "AWS_REGION", "value": "us-east-2" }
+      ],
+      "essential": true
+    }
+  ]
+}
