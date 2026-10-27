@@ -24,10 +24,6 @@ const resultsList = document.getElementById("resultsList");
 // Populated base URL context for backend communication
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:5000';
 
-
-const jwt = require('jsonwebtoken');
-const jwksClient = require('jwks-rsa');
-
 // Configuration flags
 const AUTH_PROVIDER = process.env.AUTH_PROVIDER || 'LOCAL';
 
@@ -81,8 +77,6 @@ const authenticateToken = (req, res, next) => {
     });
   }
 };
-
-module.exports = { authenticateToken };
 
 // Original function name preserved exactly from your repository file
 async function fetchCatalog() {

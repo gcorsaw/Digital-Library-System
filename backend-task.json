@@ -16,10 +16,11 @@
         }
       ],
       "environment": [
-        { "name": "COGNITO_USER_POOL_ID", "value": "us-east-2_omarHQg9c" },
-	{ "name": "COGNITO_CLIENT_ID", "value": "4bqpsi87g6bpfcsgjpfl4vd2n3" },
-        { "name": "AWS_REGION", "value": "us-east-2" }
-      ],
+        { "name": "AUTH_PROVIDER", "value": "COGNITO" },
+        { "name": "AWS_REGION", "value": "us-east-1" },
+        { "name": "COGNITO_USER_POOL_ID", "value": "us-east-1_xxxxxxxxx" },
+        { "name": "JWT_SECRET", "value": "your_fallback_local_secret" }
+    ],
       "essential": true
     }
   ]
