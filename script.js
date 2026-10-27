@@ -23,6 +23,66 @@ const resultsList = document.getElementById("resultsList");
 
 const API_BASE_URL = '';
 
+
+const jwt = require('jsonwebtoken');
+const jwksClient = require('jwks-rsa');
+
+// Configuration flags
+const AUTH_PROVIDER = process.env.AUTH_PROVIDER || 'LOCAL';
+
+// Initialize Cognito JWKS client if needed
+const cognitoClient = jwksClient({
+  jwksUri: `https://cognito-idp.${process.env.AWS_REGION}://{process.env.COGNITO_USER_POOL_ID}/.well-known/jwks.json`
+});
+
+function getKey(header, callback) {
+  cognitoClient.getSigningKey(header.kid, function(err, key) {
+    if (err) return callback(err);
+    const signingKey = key.getPublicKey();
+    callback(null, signingKey);
+  });
+}
+
+/**
+ * Unified Authentication Middleware
+ */
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) return res.status(401).json({ message: 'Authentication token missing' });
+
+  if (AUTH_PROVIDER === 'COGNITO') {
+    // 1. AWS Cognito Verification Strategy
+    jwt.verify(token, getKey, { algorithms: ['RS256'] }, (err, decoded) => {
+      if (err) return res.status(403).json({ message: 'Invalid Cognito Token', error: err.message });
+      
+      // Standardize the user object mapping from Cognito claims
+      req.user = {
+        id: decoded.sub,
+        email: decoded.email,
+        provider: 'COGNITO'
+      };
+      next();
+    });
+  } else {
+    // 2. Standard Self-Hosted Verification Strategy
+    jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] }, (err, decoded) => {
+      if (err) return res.status(403).json({ message: 'Invalid Local Token' });
+      
+      // Standardize the user object mapping from Local DB schema
+      req.user = {
+        id: decoded.id,
+        email: decoded.email,
+        provider: 'LOCAL'
+      };
+      next();
+    });
+  }
+};
+
+module.exports = { authenticateToken };
+
 // Original function name preserved exactly from your repository file
 async function fetchCatalog() {
     const token = localStorage.getItem("library_auth_token");
