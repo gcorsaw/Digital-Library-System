@@ -12,6 +12,13 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./digital-library-system.sql:/docker-entrypoint-initdb.d/init.sql
+    # FIXED: Re-indented the initialization wrapper sequence using clean standard strings
+    entrypoint: 
+      - "bash"
+      - "-c"
+      - |
+        echo "CREATE EXTENSION IF NOT EXISTS citext;" > /docker-entrypoint-initdb.d/00_citext.sql
+        exec /usr/local/bin/docker-entrypoint.sh postgres
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 3s
@@ -51,7 +58,7 @@ services:
     container_name: library_fastapi_backend
     restart: always
     ports:
-      - "5000:5000"  # FIXED: Matches API_BASE_URL (http://localhost:5000) used by frontend client script
+      - "5000:8000"
     environment:
       DB_HOST: my_postgres_db
       DB_PORT: 5432

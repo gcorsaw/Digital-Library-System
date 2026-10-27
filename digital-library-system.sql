@@ -1,4 +1,4 @@
-CREATE EXTENSION IF NOT EXISTS citext;
+CREATE EXTENSION IF NOT EXISTS citext SCHEMA public;
 
 -- 1. CLEAN RESET: Drop existing schemas in reverse relational dependency order
 DROP TABLE IF EXISTS reading_progress CASCADE;
