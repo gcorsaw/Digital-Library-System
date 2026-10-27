@@ -25,15 +25,18 @@ const API_BASE_URL = '';
 
 // Original function name preserved exactly from your repository file
 async function fetchCatalog() {
+    const token = localStorage.getItem("library_auth_token");
+    if (!token) return; // Not signed in: /books would only answer 401.
     try {
         const response = await fetch(`${API_BASE_URL}/books`, {
             method: 'GET',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
             }
         });
         if (!response.ok) {
-            throw new Error('Network performance degradation detected');
+            throw new Error(`Catalog request failed with status ${response.status}`);
         }
         const data = await response.json();
         console.log("Books fetched successfully:", data);
@@ -74,6 +77,59 @@ function formatAuthError(detail, fallbackMessage) {
   }
 
   return fallbackMessage;
+}
+
+const NETWORK_ERROR_MESSAGE =
+  "Could not reach the server. Check that the app is running and try again.";
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Turn any thrown value into text a person can act on.
+function describeError(err, fallback = "An unexpected error occurred.") {
+  if (err instanceof TypeError) return NETWORK_ERROR_MESSAGE; // fetch() network failure
+  return err instanceof Error && err.message ? err.message : fallback;
+}
+
+// Read a JSON body without throwing when the server returns HTML or nothing.
+async function readJson(response) {
+  try {
+    return await response.json();
+  } catch {
+    return {};
+  }
+}
+
+// Build an Error from a failed response, keeping the HTTP status for callers.
+function apiError(response, data, fallback) {
+  const message =
+    formatAuthError(data && data.detail, "") ||
+    (response.status >= 500
+      ? `${fallback}: the server had a problem (error ${response.status}). Please try again.`
+      : `${fallback} (error ${response.status}).`);
+  const error = new Error(message);
+  error.status = response.status;
+  return error;
+}
+
+// Alert for failed actions; signs the user out if their session is no longer valid.
+function reportActionError(err) {
+  if (err && err.status === 401) {
+    clearAuthSession();
+    alert("Your session has expired. Please log in again.");
+    return;
+  }
+  alert(`Error: ${describeError(err)}`);
+}
+
+// Cognito pool policy: 8+ chars with upper, lower, number, symbol, no edge spaces.
+function cognitoPasswordProblems(password) {
+  const problems = [];
+  if (password.length < 8) problems.push("at least 8 characters");
+  if (!/[A-Z]/.test(password)) problems.push("an uppercase letter");
+  if (!/[a-z]/.test(password)) problems.push("a lowercase letter");
+  if (!/[0-9]/.test(password)) problems.push("a number");
+  if (!/[^A-Za-z0-9\s]/.test(password)) problems.push("a symbol (such as ! # $ %)");
+  if (/^\s|\s$/.test(password)) problems.push("no spaces at the start or end");
+  return problems;
 }
 
 let currentAuthToken = localStorage.getItem("library_auth_token") || null;
@@ -120,11 +176,32 @@ async function postAuthRequest(path, payload, fallbackMessage) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
-  const data = await response.json().catch(() => ({}));
+  const data = await readJson(response);
   if (!response.ok) {
-    throw new Error(formatAuthError(data.detail, fallbackMessage));
+    throw apiError(response, data, fallbackMessage);
   }
   return data;
+}
+
+// Ask for the emailed code, allowing a few attempts for typos.
+async function confirmCognitoAccount(email, firstPrompt) {
+  let message = firstPrompt;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const code = (prompt(message) || "").trim();
+    if (!code) return false;
+    try {
+      await postAuthRequest(
+        "/auth/cognito/confirm",
+        { email, confirmation_code: code },
+        "Cognito email confirmation failed"
+      );
+      return true;
+    } catch (err) {
+      if (err.status !== 400 || attempt === 3) throw err;
+      message = `${err.message}\n\nTry again (attempt ${attempt + 1} of 3) or press Cancel to stop:`;
+    }
+  }
+  return false;
 }
 
 function saveAuthSession(data, username) {
@@ -146,30 +223,45 @@ if (signupBtn) {
       if (!provider) return;
 
       if (provider.trim() === "2") {
-        const email = prompt("Enter your email address for Cognito:");
+        const email = (prompt("Enter your email address for Cognito:") || "").trim();
         if (!email) return;
-        const password = prompt("Choose a password (at least 8 characters):");
+        if (!EMAIL_PATTERN.test(email)) {
+          alert("Registration Error: Enter a valid email address, such as name@example.com.");
+          return;
+        }
+        const password = prompt(
+          "Choose a password:\n(8+ characters with an uppercase letter, a lowercase letter, a number, and a symbol)"
+        );
         if (!password) return;
-
-        const registration = await postAuthRequest(
-          "/auth/cognito/register",
-          { email, password },
-          "Cognito registration failed"
-        );
-        const confirmationCode = prompt(
-          `${registration.message}\nEnter the confirmation code from your email:`
-        );
-        if (!confirmationCode) {
-          alert("Your account was created. Confirm the email before signing in with Cognito.");
+        const problems = cognitoPasswordProblems(password);
+        if (problems.length) {
+          alert(`Registration Error: Your password needs ${problems.join(", ")}.`);
           return;
         }
 
+        let codePrompt;
+        try {
+          const registration = await postAuthRequest(
+            "/auth/cognito/register",
+            { email, password },
+            "Cognito registration failed"
+          );
+          codePrompt = `${registration.message}\nEnter the confirmation code from your email:`;
+        } catch (err) {
+          if (err.status !== 409) throw err;
+          // The email is already registered, possibly never confirmed.
+          codePrompt =
+            "An account with this email already exists.\n" +
+            "If you never confirmed it, enter the code from your email now.\n" +
+            "Otherwise press Cancel and use Log in:";
+        }
+
         errorStage = "Confirmation";
-        await postAuthRequest(
-          "/auth/cognito/confirm",
-          { email, confirmation_code: confirmationCode },
-          "Cognito email confirmation failed"
-        );
+        const confirmed = await confirmCognitoAccount(email, codePrompt);
+        if (!confirmed) {
+          alert("Your account is not confirmed yet. Confirm the email code before signing in with Cognito.");
+          return;
+        }
         errorStage = "Sign-in";
         const tokenData = await postAuthRequest(
           "/auth/cognito/login",
@@ -201,7 +293,7 @@ if (signupBtn) {
       saveAuthSession(data, data.user.username);
       alert(`Welcome to your digital library, ${currentUsername}! Account created successfully.`);
     } catch (err) {
-      alert(`${errorStage} Error: ${err instanceof Error ? err.message : "An unexpected error occurred."}`);
+      alert(`${errorStage} Error: ${describeError(err)}`);
     }
   });
 }
@@ -242,7 +334,11 @@ loginBtn.addEventListener("click", async () => {
         );
       saveAuthSession(data, isCognito ? usernameOrEmail : data.user.username);
     } catch (err) {
-      alert(`Login Failed: ${err instanceof Error ? err.message : "An unexpected error occurred."}`);
+      let message = describeError(err);
+      if (isCognito && err && err.status === 401) {
+        message += "\n\nIf you just registered, make sure you confirmed the emailed code first.";
+      }
+      alert(`Login Failed: ${message}`);
       syncAuthState();
     }
   }
@@ -292,9 +388,7 @@ async function fetchJSON(path) {
 
   const res = await fetch(`${API_BASE_URL}${path}`, { headers: headers });
   if (!res.ok) {
-    const error = new Error(`${path} responded with ${res.status}`);
-    error.status = res.status;
-    throw error;
+    throw apiError(res, await readJson(res), "The library request failed");
   }
   return res.json();
 }
@@ -309,9 +403,9 @@ async function submitEntry(path, payload) {
     body: JSON.stringify(payload),
   });
   
-  const data = await res.json().catch(() => ({}));
+  const data = await readJson(res);
   if (!res.ok) {
-    throw new Error(data.detail || `Request failed with ${res.status}`);
+    throw apiError(res, data, "Could not add the entry");
   }
   return data;
 }
@@ -334,7 +428,7 @@ addBookForm.addEventListener("submit", async (event) => {
         if (addModal) addModal.hidden = true;
     }, 800);
   } catch (error) {
-    addModalStatus.textContent = error.message;
+    addModalStatus.textContent = describeError(error);
   }
 });
 
@@ -356,7 +450,7 @@ addGameForm.addEventListener("submit", async (event) => {
         if (addModal) addModal.hidden = true;
     }, 800);
   } catch (error) {
-    addModalStatus.textContent = error.message;
+    addModalStatus.textContent = describeError(error);
   }
 });
 
@@ -395,7 +489,7 @@ if (sideMenu) {
             const ratingStr = b.rating ? ` (${b.rating}★)` : "";
             return `${b.book_title}${statusStr}${ratingStr}`;
           }));
-        } catch (err) { renderError(err.message); }
+        } catch (err) { handleRouteError(err); }
       } 
       else if (action === "edit") {
         const bookTitle = prompt("Enter the exact Book Title you want to update:");
@@ -409,11 +503,11 @@ if (sideMenu) {
             headers: headers,
             body: JSON.stringify({ book_description: newDesc })
           });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.detail || "Update failed");
+          const data = await readJson(res);
+          if (!res.ok) throw apiError(res, data, "Update failed");
           alert("Description updated successfully!");
           if (typeof routeHandlers["/books"] === "function") { await routeHandlers["/books"](); }
-        } catch (err) { alert(`Error: ${err.message}`); }
+        } catch (err) { reportActionError(err); }
       }
       else if (action === "remove") {
         const entryType = prompt("Remove a book or game? Enter 'book' or 'game':");
@@ -438,12 +532,12 @@ if (sideMenu) {
             `${API_BASE_URL}/${resource}?${titleParam}=${encodeURIComponent(entryTitle)}`,
             { method: "DELETE", headers: headers }
           );
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.detail || "Deletion failed");
+          const data = await readJson(res);
+          if (!res.ok) throw apiError(res, data, "Deletion failed");
           alert(`${titleLabel} removed from your library.`);
           const route = isBook ? "/books" : "/games";
           if (typeof routeHandlers[route] === "function") { await routeHandlers[route](); }
-        } catch (err) { alert(`Error: ${err.message}`); }
+        } catch (err) { reportActionError(err); }
       }
       else if (action === "progress") {
         const bookTitle = prompt("Enter the exact Book Title you want to log progress for:");
@@ -453,7 +547,13 @@ if (sideMenu) {
         let ratingChoice = null;
         if (statusChoice.trim().toLowerCase() === "read") {
           const ratingInput = prompt("Rate this book from 1 to 5 stars (Optional, leave blank if unrated):");
-          if (ratingInput) ratingChoice = parseInt(ratingInput, 10);
+          if (ratingInput) {
+            ratingChoice = parseInt(ratingInput, 10);
+            if (!Number.isInteger(ratingChoice) || ratingChoice < 1 || ratingChoice > 5) {
+              alert("Rating must be a whole number from 1 to 5.");
+              return;
+            }
+          }
         }
         try {
           const headers = { "Content-Type": "application/json" };
@@ -463,11 +563,11 @@ if (sideMenu) {
             headers: headers,
             body: JSON.stringify({ read_status: statusChoice, rating: ratingChoice })
           });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.detail || "Progress update failed");
+          const data = await readJson(res);
+          if (!res.ok) throw apiError(res, data, "Progress update failed");
           alert(`Successfully logged "${bookTitle}" as "${statusChoice}" with a ${ratingChoice || 'no'} star rating!`);
           if (typeof routeHandlers["/books"] === "function") { await routeHandlers["/books"](); }
-        } catch (err) { alert(`Error: ${err.message}`); }
+        } catch (err) { reportActionError(err); }
       }
     });
   });
@@ -562,7 +662,7 @@ function renderError(message) {
   resultsTitle.textContent = "Couldn't load that";
   resultsList.innerHTML = "";
   const li = document.createElement("li");
-  li.textContent = `${message} — is main.py running?`;
+  li.textContent = message;
   resultsList.appendChild(li);
   resultsSection.hidden = false;
 }
@@ -610,13 +710,18 @@ async function loadRoute(route) {
     await handler();
   } catch (error) {
     console.error(error);
-    if (error instanceof Error && error.status === 401) {
-      clearAuthSession();
-      renderLoginRequired();
-      return;
-    }
-    renderError(error instanceof Error ? error.message : String(error));
+    handleRouteError(error);
   }
+}
+
+// Show a login prompt for expired sessions, otherwise a readable error.
+function handleRouteError(error) {
+  if (error instanceof Error && error.status === 401) {
+    clearAuthSession();
+    renderLoginRequired();
+    return;
+  }
+  renderError(describeError(error, String(error)));
 }
 
 async function exportLibrary() {

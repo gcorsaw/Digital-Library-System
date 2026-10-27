@@ -313,6 +313,24 @@ def create_access_token(user_id: int, username: str) -> str:
     }
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
+def native_auth_enabled() -> bool:
+    """Return whether username/password (native) accounts are allowed.
+
+    ALLOW_NATIVE_AUTH=true  -> native and Cognito can be used side by side.
+    ALLOW_NATIVE_AUTH=false -> native accounts are off.
+    Unset                   -> native is on only when Cognito is off (original behavior).
+    """
+    explicit = os.getenv("ALLOW_NATIVE_AUTH", "").strip().lower()
+    if explicit in {"true", "false"}:
+        return explicit == "true"
+    return os.getenv("USE_COGNITO", "false").lower() != "true"
+
+
+def cognito_auth_enabled() -> bool:
+    """Return whether Amazon Cognito sign-in is enabled."""
+    return os.getenv("USE_COGNITO", "false").lower() == "true"
+
+
 def decode_bearer_token(token: str) -> dict:
     """Verify a native JWT or Cognito access token and return its identity."""
     try:
@@ -451,8 +469,7 @@ def get_current_user(
     if credentials is None:
         raise unauthorized
     identity = decode_bearer_token(credentials.credentials)
-    if identity["identity_provider"] == "native_jwt" and \
-       os.getenv("USE_COGNITO", "false").lower() == "true":
+    if identity["identity_provider"] == "native_jwt" and not native_auth_enabled():
         raise unauthorized
     if identity["identity_provider"] == "aws_cognito":
         user = get_or_create_cognito_user(identity, credentials.credentials, cursor)
@@ -538,10 +555,16 @@ def get_or_create_cognito_user(identity: dict, access_token: str, cursor: RealDi
     )
     return cursor.fetchone()
 
+@library_app.get("/auth/options", tags=["Authentication"])
+def auth_options():
+    """Report which sign-in methods the frontend should offer."""
+    return {"native": native_auth_enabled(), "cognito": cognito_auth_enabled()}
+
+
 @library_app.post("/auth/register")
 def register(body: RegisterRequest, cursor: RealDictCursor = Depends(get_db_cursor)):
     """Create an account, initialize its schema, and return a bearer token."""
-    if os.getenv("USE_COGNITO", "false").lower() == "true":
+    if not native_auth_enabled():
         raise HTTPException(
             status_code=503,
             detail="Native registration is disabled. Use /auth/cognito/register instead."
@@ -690,7 +713,7 @@ def login_cognito(body: CognitoLoginRequest):
 @library_app.post("/auth/login")
 def login(body: LoginRequest, cursor: RealDictCursor = Depends(get_db_cursor)):
     """Authenticate by username or email and return a bearer token on success."""
-    if os.getenv("USE_COGNITO", "false").lower() == "true":
+    if not native_auth_enabled():
         raise HTTPException(
             status_code=503,
             detail="Native login is disabled. Use /auth/cognito/login instead."

@@ -72,6 +72,7 @@ def test_database_manager_initializes_pool_once(monkeypatch):
         password="password",
         host="localhost",
         port=5544,
+        sslmode="prefer",
     )
     manager._pool = pool
     manager.close_pool()
@@ -2063,3 +2064,82 @@ def test_main_continues_when_database_check_fails(monkeypatch, capsys):
     run_server.assert_called_once_with(
         "main:library_app", host="0.0.0.0", port=8000, reload=True
     )
+
+
+@pytest.mark.parametrize(
+    ("use_cognito", "allow_native", "native", "cognito"),
+    [
+        ("false", None, True, False),
+        ("true", None, False, True),
+        ("true", "true", True, True),
+        ("false", "false", False, False),
+        ("true", "TRUE", True, True),
+        ("true", "maybe", False, True),
+    ],
+)
+def test_auth_options_report_enabled_sign_in_methods(
+    monkeypatch, use_cognito, allow_native, native, cognito
+):
+    """Verify native and Cognito sign-in can be enabled independently."""
+    monkeypatch.setenv("USE_COGNITO", use_cognito)
+    if allow_native is None:
+        monkeypatch.delenv("ALLOW_NATIVE_AUTH", raising=False)
+    else:
+        monkeypatch.setenv("ALLOW_NATIVE_AUTH", allow_native)
+
+    assert main.native_auth_enabled() is native
+    assert main.cognito_auth_enabled() is cognito
+    assert main.auth_options() == {"native": native, "cognito": cognito}
+
+
+def test_native_register_and_login_work_alongside_cognito(monkeypatch):
+    """Verify local accounts still work when Cognito and ALLOW_NATIVE_AUTH are both on."""
+    monkeypatch.setenv("USE_COGNITO", "true")
+    monkeypatch.setenv("ALLOW_NATIVE_AUTH", "true")
+    monkeypatch.setenv("JWT_SECRET_KEY", TOKEN_SECRET)
+    cursor = MagicMock()
+    cursor.fetchone.return_value = {**USER, "password_hash": "stored-hash"}
+    hasher = MagicMock()
+    hasher.hash.return_value = "hashed"
+    hasher.verify.return_value = True
+    monkeypatch.setattr(main, "password_hasher", hasher)
+    monkeypatch.setattr(main, "activate_user_schema", MagicMock())
+
+    registered = main.register(
+        main.RegisterRequest(username="reader", email="reader@example.com", password="password123"),
+        cursor,
+    )
+    logged_in = main.login(main.LoginRequest(username="reader", password="password123"), cursor)
+
+    assert registered["access_token"]
+    assert logged_in["access_token"]
+
+    # A native token is also accepted for authenticated requests in this mode.
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=logged_in["access_token"])
+    cursor.fetchone.return_value = USER
+    assert main.get_current_user(credentials, cursor) == USER
+
+
+def test_native_auth_is_blocked_when_only_cognito_is_enabled(monkeypatch):
+    """Verify the original Cognito-only behavior is unchanged without ALLOW_NATIVE_AUTH."""
+    monkeypatch.setenv("USE_COGNITO", "true")
+    monkeypatch.delenv("ALLOW_NATIVE_AUTH", raising=False)
+    monkeypatch.setenv("JWT_SECRET_KEY", TOKEN_SECRET)
+    cursor = MagicMock()
+
+    with pytest.raises(HTTPException) as register_error:
+        main.register(
+            main.RegisterRequest(username="reader", email="reader@example.com", password="password123"),
+            cursor,
+        )
+    with pytest.raises(HTTPException) as login_error:
+        main.login(main.LoginRequest(username="reader", password="password123"), cursor)
+
+    token = main.create_access_token(7, "reader")
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    with pytest.raises(HTTPException) as token_error:
+        main.get_current_user(credentials, cursor)
+
+    assert register_error.value.status_code == 503
+    assert login_error.value.status_code == 503
+    assert token_error.value.status_code == 401

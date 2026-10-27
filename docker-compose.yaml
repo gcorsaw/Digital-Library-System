@@ -60,6 +60,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       USE_COGNITO: ${USE_COGNITO:-true}
+      # true = offer both local and Cognito sign-in; empty = only the method USE_COGNITO selects
+      ALLOW_NATIVE_AUTH: ${ALLOW_NATIVE_AUTH:-}
       AWS_REGION: ${AWS_REGION:-us-east-1}
       # Set AWS_COGNITO_ENDPOINT to an empty value in .env to use AWS Cognito.
       AWS_COGNITO_ENDPOINT: ${AWS_COGNITO_ENDPOINT-http://cognito-local:9229}
