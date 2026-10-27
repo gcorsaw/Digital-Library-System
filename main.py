@@ -172,7 +172,8 @@ class DatabaseManager:
                 user=get_env("DB_USER"),
                 password=get_env("DB_PASSWORD"),
                 host=get_env("DB_HOST"),
-                port=int(get_env("DB_PORT"))
+                port=int(get_env("DB_PORT")),
+                sslmode="require"
             )
         except Exception as error:
             print(error)
@@ -450,6 +451,9 @@ def get_current_user(
     if credentials is None:
         raise unauthorized
     identity = decode_bearer_token(credentials.credentials)
+    if identity["identity_provider"] == "native_jwt" and \
+       os.getenv("USE_COGNITO", "false").lower() == "true":
+        raise unauthorized
     if identity["identity_provider"] == "aws_cognito":
         user = get_or_create_cognito_user(identity, credentials.credentials, cursor)
     else:
@@ -462,7 +466,6 @@ def get_current_user(
         raise unauthorized
     activate_user_schema(cursor, user["user_id"])
     return dict(user)
-
 
 def get_or_create_cognito_user(identity: dict, access_token: str, cursor: RealDictCursor) -> dict:
     """Resolve Cognito sub to a local profile, linking only a verified matching email."""
@@ -535,9 +538,14 @@ def get_or_create_cognito_user(identity: dict, access_token: str, cursor: RealDi
     )
     return cursor.fetchone()
 
-@library_app.post("/auth/register", status_code=status.HTTP_201_CREATED)
+@library_app.post("/auth/register")
 def register(body: RegisterRequest, cursor: RealDictCursor = Depends(get_db_cursor)):
     """Create an account, initialize its schema, and return a bearer token."""
+    if os.getenv("USE_COGNITO", "false").lower() == "true":
+        raise HTTPException(
+            status_code=503,
+            detail="Native registration is disabled. Use /auth/cognito/register instead."
+        )
     try:
         cursor.execute(
             """
@@ -556,6 +564,7 @@ def register(body: RegisterRequest, cursor: RealDictCursor = Depends(get_db_curs
         "token_type": "bearer",
         "user": dict(user),
     }
+
 
 
 def cognito_http_error(error: CognitoApiError) -> HTTPException:
@@ -681,6 +690,11 @@ def login_cognito(body: CognitoLoginRequest):
 @library_app.post("/auth/login")
 def login(body: LoginRequest, cursor: RealDictCursor = Depends(get_db_cursor)):
     """Authenticate by username or email and return a bearer token on success."""
+    if os.getenv("USE_COGNITO", "false").lower() == "true":
+        raise HTTPException(
+            status_code=503,
+            detail="Native login is disabled. Use /auth/cognito/login instead."
+        )
     identifier = body.username.strip()
     cursor.execute(
         """
@@ -704,6 +718,7 @@ def login(body: LoginRequest, cursor: RealDictCursor = Depends(get_db_cursor)):
         "user": {"user_id": user["user_id"], "username": user["username"], "email": user["email"]},
     }
 
+
 @library_app.get("/auth/me")
 def read_me(user: dict = Depends(get_current_user)):
     """Return the authenticated user's public account details."""
@@ -718,7 +733,8 @@ def connect():
             user=get_env("DB_USER"),
             password=get_env("DB_PASSWORD"),
             host=get_env("DB_HOST"),
-            port=int(get_env("DB_PORT"))
+            port=int(get_env("DB_PORT")),
+                sslmode="require"
         )
         cursor = connection.cursor()
         print("PostgreSQL database version:")

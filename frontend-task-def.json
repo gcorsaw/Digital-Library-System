@@ -1,0 +1,34 @@
+{
+    "containerDefinitions": [
+        {
+            "name": "frontend",
+            "image": "957076202146.dkr.ecr.us-east-2.amazonaws.com/gcorsaw/digital_library_system:frontend-latest",
+            "cpu": 0,
+            "portMappings": [
+                {
+                    "containerPort": 3000,
+                    "hostPort": 3000,
+                    "protocol": "tcp"
+                }
+            ],
+            "essential": true,
+            "environment": [],
+            "mountPoints": [],
+            "volumesFrom": [],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/digital-library-frontend",
+                    "awslogs-region": "us-east-2",
+                    "awslogs-stream-prefix": "ecs"
+                }
+            },
+            "systemControls": []
+        }
+    ],
+    "cpu": "512",
+    "memory": "1024",
+    "networkMode": "awsvpc",
+    "executionRoleArn": "arn:aws:iam::957076202146:role/ecsTaskExecutionRole",
+    "taskRoleArn": null
+}
