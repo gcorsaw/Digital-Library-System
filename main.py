@@ -226,7 +226,7 @@ origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
 
 library_app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["http://localhost:8080"], # or ["*"] for local testing
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
