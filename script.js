@@ -21,7 +21,8 @@ const resultsSection = document.getElementById("results");
 const resultsTitle = document.getElementById("resultsTitle");
 const resultsList = document.getElementById("resultsList");
 
-const API_BASE_URL = '';
+// Populated base URL context for backend communication
+const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:5000';
 
 
 const jwt = require('jsonwebtoken');
@@ -30,9 +31,9 @@ const jwksClient = require('jwks-rsa');
 // Configuration flags
 const AUTH_PROVIDER = process.env.AUTH_PROVIDER || 'LOCAL';
 
-// Initialize Cognito JWKS client if needed
+// Initialize Cognito JWKS client with corrected endpoint URL interpolation
 const cognitoClient = jwksClient({
-  jwksUri: `https://cognito-idp.${process.env.AWS_REGION}://{process.env.COGNITO_USER_POOL_ID}/.well-known/jwks.json`
+  jwksUri: `https://cognito-idp.\${process.env.AWS_REGION}.amazonaws.com/\${process.env.COGNITO_USER_POOL_ID}/.well-known/jwks.json`
 });
 
 function getKey(header, callback) {
@@ -88,15 +89,15 @@ async function fetchCatalog() {
     const token = localStorage.getItem("library_auth_token");
     if (!token) return; // Not signed in: /books would only answer 401.
     try {
-        const response = await fetch(`${API_BASE_URL}/books`, {
+        const response = await fetch(`\${API_BASE_URL}/books`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
+                'Authorization': `Bearer \${token}`
             }
         });
         if (!response.ok) {
-            throw new Error(`Catalog request failed with status ${response.status}`);
+            throw new Error(`Catalog request failed with status \${response.status}`);
         }
         const data = await response.json();
         console.log("Books fetched successfully:", data);
@@ -127,7 +128,7 @@ function formatAuthError(detail, fallbackMessage) {
         ? issue.msg.replace(/^Value error,\s*/, "")
         : "";
 
-      return location && message ? `${location}: ${message}` : message;
+      return location && message ? `\${location}: \${message}` : message;
     }).filter(Boolean);
 
     if (messages.length) return messages.join("\n");
@@ -163,8 +164,8 @@ function apiError(response, data, fallback) {
   const message =
     formatAuthError(data && data.detail, "") ||
     (response.status >= 500
-      ? `${fallback}: the server had a problem (error ${response.status}). Please try again.`
-      : `${fallback} (error ${response.status}).`);
+      ? `\${fallback}: the server had a problem (error \${response.status}). Please try again.`
+      : `\${fallback} (error \${response.status}).`);
   const error = new Error(message);
   error.status = response.status;
   return error;
@@ -177,7 +178,7 @@ function reportActionError(err) {
     alert("Your session has expired. Please log in again.");
     return;
   }
-  alert(`Error: ${describeError(err)}`);
+  alert(`Error: \${describeError(err)}`);
 }
 
 // Cognito pool policy: 8+ chars with upper, lower, number, symbol, no edge spaces.
@@ -196,7 +197,7 @@ let currentAuthToken = localStorage.getItem("library_auth_token") || null;
 let currentUsername = localStorage.getItem("library_username") || "guest";
 
 function updateUsernameTitle(newUsername) {
-  document.title = `${newUsername}'s Digital Library`;
+  document.title = `\${newUsername}'s Digital Library`;
   userNameEl.textContent = newUsername;
 }
 
@@ -231,7 +232,7 @@ function syncAuthState() {
 }
 
 async function postAuthRequest(path, payload, fallbackMessage) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(`\${API_BASE_URL}\${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
@@ -258,7 +259,7 @@ async function confirmCognitoAccount(email, firstPrompt) {
       return true;
     } catch (err) {
       if (err.status !== 400 || attempt === 3) throw err;
-      message = `${err.message}\n\nTry again (attempt ${attempt + 1} of 3) or press Cancel to stop:`;
+      message = `\${err.message}\n\nTry again (attempt \${attempt + 1} of 3) or press Cancel to stop:`;
     }
   }
   return false;
@@ -295,7 +296,7 @@ if (signupBtn) {
         if (!password) return;
         const problems = cognitoPasswordProblems(password);
         if (problems.length) {
-          alert(`Registration Error: Your password needs ${problems.join(", ")}.`);
+          alert(`Registration Error: Your password needs \${problems.join(", ")}.`);
           return;
         }
 
@@ -306,7 +307,7 @@ if (signupBtn) {
             { email, password },
             "Cognito registration failed"
           );
-          codePrompt = `${registration.message}\nEnter the confirmation code from your email:`;
+          codePrompt = `\${registration.message}\nEnter the confirmation code from your email:`;
         } catch (err) {
           if (err.status !== 409) throw err;
           // The email is already registered, possibly never confirmed.
@@ -329,7 +330,7 @@ if (signupBtn) {
           "Cognito sign-in failed"
         );
         saveAuthSession(tokenData, email);
-        alert(`Welcome to your digital library, ${email}! Your Cognito account is ready.`);
+        alert(`Welcome to your digital library, \${email}! Your Cognito account is ready.`);
         return;
       }
 
@@ -351,9 +352,9 @@ if (signupBtn) {
         "Registration failed"
       );
       saveAuthSession(data, data.user.username);
-      alert(`Welcome to your digital library, ${currentUsername}! Account created successfully.`);
+      alert(`Welcome to your digital library, \${currentUsername}! Account created successfully.`);
     } catch (err) {
-      alert(`${errorStage} Error: ${describeError(err)}`);
+      alert(`\${errorStage} Error: \${describeError(err)}`);
     }
   });
 }
@@ -398,7 +399,7 @@ loginBtn.addEventListener("click", async () => {
       if (isCognito && err && err.status === 401) {
         message += "\n\nIf you just registered, make sure you confirmed the emailed code first.";
       }
-      alert(`Login Failed: ${message}`);
+      alert(`Login Failed: \${message}`);
       syncAuthState();
     }
   }
@@ -443,10 +444,10 @@ addModalClose.addEventListener("click", () => {
 async function fetchJSON(path) {
   const headers = {};
   if (currentAuthToken) { 
-    headers["Authorization"] = `Bearer ${currentAuthToken}`; 
+    headers["Authorization"] = `Bearer \${currentAuthToken}`; 
   }
 
-  const res = await fetch(`${API_BASE_URL}${path}`, { headers: headers });
+  const res = await fetch(`\${API_BASE_URL}\${path}`, { headers: headers });
   if (!res.ok) {
     throw apiError(res, await readJson(res), "The library request failed");
   }
@@ -455,9 +456,9 @@ async function fetchJSON(path) {
 
 async function submitEntry(path, payload) {
   const headers = { "Content-Type": "application/json" };
-  if (currentAuthToken) { headers["Authorization"] = `Bearer ${currentAuthToken}`; }
+  if (currentAuthToken) { headers["Authorization"] = `Bearer \${currentAuthToken}`; }
 
-  const res = await fetch(`${API_BASE_URL}${path}`, {
+  const res = await fetch(`\${API_BASE_URL}\${path}`, {
     method: "POST",
     headers: headers,
     body: JSON.stringify(payload),
@@ -543,11 +544,11 @@ if (sideMenu) {
         const query = prompt("Enter a single word to search for:");
         if (!query) return;
         try {
-          const data = await fetchJSON(`/books/search?title=${encodeURIComponent(query)}`);
-          renderResults(`Search results for "${query}"`, data.books.map(b => {
-            const statusStr = b.read_status ? ` [${b.read_status}]` : "";
-            const ratingStr = b.rating ? ` (${b.rating}★)` : "";
-            return `${b.book_title}${statusStr}${ratingStr}`;
+          const data = await fetchJSON(`/books/search?title=\${encodeURIComponent(query)}`);
+          renderResults(`Search results for "\${query}"`, data.books.map(b => {
+            const statusStr = b.read_status ? ` [\${b.read_status}]` : "";
+            const ratingStr = b.rating ? ` (\${b.rating}★)` : "";
+            return `\${b.book_title}\${statusStr}\${ratingStr}`;
           }));
         } catch (err) { handleRouteError(err); }
       } 
@@ -557,8 +558,8 @@ if (sideMenu) {
         if (!bookTitle || !newDesc) return;
         try {
           const headers = { "Content-Type": "application/json" };
-          if (currentAuthToken) headers["Authorization"] = `Bearer ${currentAuthToken}`;
-          const res = await fetch(`${API_BASE_URL}/books/description?book_title=${encodeURIComponent(bookTitle)}`, {
+          if (currentAuthToken) headers["Authorization"] = `Bearer \${currentAuthToken}`;
+          const res = await fetch(`\${API_BASE_URL}/books/description?book_title=\${encodeURIComponent(bookTitle)}`, {
             method: "PUT",
             headers: headers,
             body: JSON.stringify({ book_description: newDesc })
@@ -580,21 +581,21 @@ if (sideMenu) {
 
         const isBook = normalizedType === "book";
         const titleLabel = isBook ? "Book" : "Game";
-        const entryTitle = prompt(`Enter the exact ${titleLabel} Title you want to remove:`);
+        const entryTitle = prompt(`Enter the exact \${titleLabel} Title you want to remove:`);
         if (!entryTitle) return;
-        if (!confirm(`Are you sure you want to remove "${entryTitle}" from your library?`)) return;
+        if (!confirm(`Are you sure you want to remove "\${entryTitle}" from your library?`)) return;
         try {
           const headers = {};
-          if (currentAuthToken) headers["Authorization"] = `Bearer ${currentAuthToken}`;
+          if (currentAuthToken) headers["Authorization"] = `Bearer \${currentAuthToken}`;
           const resource = isBook ? "books" : "games";
           const titleParam = isBook ? "book_title" : "game_title";
           const res = await fetch(
-            `${API_BASE_URL}/${resource}?${titleParam}=${encodeURIComponent(entryTitle)}`,
+            `\${API_BASE_URL}/lternate\${resource}?\${titleParam}=\${encodeURIComponent(entryTitle)}`,
             { method: "DELETE", headers: headers }
           );
           const data = await readJson(res);
           if (!res.ok) throw apiError(res, data, "Deletion failed");
-          alert(`${titleLabel} removed from your library.`);
+          alert(`\${titleLabel} removed from your library.`);
           const route = isBook ? "/books" : "/games";
           if (typeof routeHandlers[route] === "function") { await routeHandlers[route](); }
         } catch (err) { reportActionError(err); }
@@ -617,15 +618,15 @@ if (sideMenu) {
         }
         try {
           const headers = { "Content-Type": "application/json" };
-          if (currentAuthToken) headers["Authorization"] = `Bearer ${currentAuthToken}`;
-          const res = await fetch(`${API_BASE_URL}/books/progress?book_title=${encodeURIComponent(bookTitle)}`, {
+          if (currentAuthToken) headers["Authorization"] = `Bearer \${currentAuthToken}`;
+          const res = await fetch(`\${API_BASE_URL}/books/progress?book_title=\${encodeURIComponent(bookTitle)}`, {
             method: "PUT",
             headers: headers,
             body: JSON.stringify({ read_status: statusChoice, rating: ratingChoice })
           });
           const data = await readJson(res);
           if (!res.ok) throw apiError(res, data, "Progress update failed");
-          alert(`Successfully logged "${bookTitle}" as "${statusChoice}" with a ${ratingChoice || 'no'} star rating!`);
+          alert(`Successfully logged "\${bookTitle}" as "\${statusChoice}" with a \${ratingChoice || 'no'} star rating!`);
           if (typeof routeHandlers["/books"] === "function") { await routeHandlers["/books"](); }
         } catch (err) { reportActionError(err); }
       }
@@ -731,9 +732,9 @@ const routeHandlers = {
   "/books": async () => {
     const data = await fetchJSON("/books");
     renderCollection("/books", "Your books", data.books.map((b) => {
-      const status = b.read_status ? ` [${b.read_status}]` : "";
-      const rating = b.rating ? ` (${b.rating}★)` : "";
-      return `${b.book_title}${status}${rating}`;
+      const status = b.read_status ? ` [\${b.read_status}]` : "";
+      const rating = b.rating ? ` (\${b.rating}★)` : "";
+      return `\${b.book_title}\${status}\${rating}`;
     }));
   },
   "/games": async () => {
@@ -747,11 +748,11 @@ const routeHandlers = {
     ]);
     const rows = [
       ...books.books.map((b) => {
-        const statusStr = b.read_status ? ` [${b.read_status}]` : "";
-        const ratingStr = b.rating ? ` (${b.rating}★)` : "";
-        return `${b.book_title}${statusStr}${ratingStr} (book)`;
+        const statusStr = b.read_status ? ` [\${b.read_status}]` : "";
+        const ratingStr = b.rating ? ` (\${b.rating}★)` : "";
+        return `\${b.book_title}\${statusStr}\${ratingStr} (book)`;
       }),
-      ...games.games.map((g) => `${g.game_title} (game)`),
+      ...games.games.map((g) => `\${g.game_title} (game)`),
     ];
     renderResults("Everything in your library", rows);
   },
@@ -792,15 +793,15 @@ async function exportLibrary() {
 
   const lines = [
     "Digital Library Export",
-    `Exported: ${new Date().toLocaleString()}`,
+    `Exported: \${new Date().toLocaleString()}`,
     "",
-    `BOOKS (${bookData.books.length})`,
+    `BOOKS (\${bookData.books.length})`,
     "-----",
   ];
 
   const addField = (label, value) => {
     if (value !== null && value !== undefined && String(value).trim() !== "") {
-      lines.push(`${label}: ${value}`);
+      lines.push(`\${label}: \${value}`);
     }
   };
 
@@ -809,7 +810,7 @@ async function exportLibrary() {
   } else {
     bookData.books.forEach((book, index) => {
       if (index > 0) lines.push("");
-      lines.push(`Title: ${book.book_title}`);
+      lines.push(`Title: \${book.book_title}`);
       addField("ISBN", book.book_isbn);
       addField("Internal code", book.internal_code);
       addField("Published", book.publish_date);
@@ -820,13 +821,13 @@ async function exportLibrary() {
     });
   }
 
-  lines.push("", `GAMES (${gameData.games.length})`, "-----");
+  lines.push("", `GAMES (\${gameData.games.length})`, "-----");
   if (gameData.games.length === 0) {
     lines.push("No games in this library.");
   } else {
     gameData.games.forEach((game, index) => {
       if (index > 0) lines.push("");
-      lines.push(`Title: ${game.game_title}`);
+      lines.push(`Title: \${game.game_title}`);
       addField("Publisher", game.publisher);
       addField("Released", game.release_date);
       addField("Play status", game.play_status);
@@ -839,7 +840,7 @@ async function exportLibrary() {
   const downloadUrl = URL.createObjectURL(file);
   const link = document.createElement("a");
   link.href = downloadUrl;
-  link.download = `digital-library-${new Date().toISOString().slice(0, 10)}.txt`;
+  link.download = `digital-library-\${new Date().toISOString().slice(0, 10)}.txt`;
   document.body.appendChild(link);
   link.click();
   link.remove();
