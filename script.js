@@ -185,7 +185,11 @@ async function confirmCognitoAccount (email, firstPrompt) {
             await postAuthRequest("/auth/cognito/confirm", { email, confirmation_code: code }, "Cognito email confirmation failed");
             return true;
         } catch (err) {
-            if (err.status !== 400 || attempt === 3) throw err;
+            if (err.status !== 400) throw err;
+            if (attempt === 3) {
+                err.message += "\n\nToo many incorrect attempts. Choose Sign up > Amazon Cognito and enter the same email again to get a new code.";
+                throw err;
+            }
             message = `${err.message}\n\nTry again (attempt ${attempt + 1} of 3) or press Cancel to stop:`;
         }
     }
@@ -226,16 +230,21 @@ if (signupBtn) {
                 let codePrompt;
                 try {
                     const registration = await postAuthRequest("/auth/cognito/register", { email, password }, "Cognito registration failed");
-                    codePrompt = `${registration.message}\nEnter the confirmation code from your email:`;
+                    codePrompt = `${registration.message}\n\nEnter the confirmation code:`;
                 } catch (err) {
-                    if (err.status !== 409) throw err;
-                    codePrompt = "An account with this email already exists.\n" + "If you never confirmed it, enter the code from your email now.\n" + "Otherwise press Cancel and use Log in:";
+                    if (err.status === 409) {
+                        // The API only returns 409 for accounts that are already confirmed.
+                        // Unconfirmed accounts are sent a fresh code by the registration call above.
+                        alert("An account with this email already exists and is already confirmed.\nUse Log in and choose Amazon Cognito.");
+                        return;
+                    }
+                    throw err;
                 }
 
                 errorStage = "Confirmation";
                 const confirmed = await confirmCognitoAccount(email, codePrompt);
                 if (!confirmed) {
-                    alert("Your account is not confirmed yet. Confirm the email code before signing in with Cognito.");
+                    alert("Your account is not confirmed yet. Choose Sign up > Amazon Cognito with the same email to get a new code, then confirm it before signing in.");
                     return;
                 }
                 errorStage = "Sign-in";
@@ -290,6 +299,9 @@ loginBtn.addEventListener("click", async () => {
             let message = describeError(err);
             if (isCognito && err && err.status === 401) {
                 message += "\n\nIf you just registered, make sure you confirmed the emailed code first.";
+            }
+            if (isCognito && err && err.status === 403) {
+                message += "\n\nTo get a new confirmation code, choose Sign up > Amazon Cognito and enter the same email.";
             }
             alert(`Login Failed: ${message}`);
             syncAuthState();

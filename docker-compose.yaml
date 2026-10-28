@@ -35,7 +35,7 @@ services:
       - cognito_data:/app/.cognito
     environment:
       - PORT=9229
-      - CODE=${COGNITO_LOCAL_CODE:-123456}
+      # - CODE=${COGNITO_LOCAL_CODE:-123456}
 
   cognito-init:
     build:
