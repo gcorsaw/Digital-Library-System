@@ -374,6 +374,7 @@ addBookForm.addEventListener("submit", async (event) => {
     const payload = {
         book_title: formData.get("book_title"),
         book_isbn: formData.get("book_isbn") || null,
+        internal_code: formData.get("internal_code") || null,
         publish_date: formData.get("publish_date") || null,
     };
     addModalStatus.textContent = "Adding…";

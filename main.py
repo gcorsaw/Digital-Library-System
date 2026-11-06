@@ -1,14 +1,18 @@
+import hashlib
 import os
 import secrets
 import time
+from datetime import date
+from pathlib import Path
 
 import jwt
 import psycopg2
 import requests
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 library_app = FastAPI(title="Digital Library API")
 app = library_app
@@ -237,6 +241,213 @@ class CognitoConfirm(BaseModel):
 class CognitoLogin(BaseModel):
     email: EmailStr
     password: str
+
+
+class BookCreate(BaseModel):
+    book_title: str = Field(min_length=1, max_length=255)
+    book_isbn: str | None = Field(default=None, max_length=20)
+    internal_code: str | None = Field(default=None, max_length=50)
+    publish_date: date | None = None
+
+
+class GameCreate(BaseModel):
+    game_title: str = Field(min_length=1, max_length=255)
+    publisher: str | None = Field(default=None, max_length=255)
+    release_date: date | None = None
+
+
+def get_library_schema(authorization: str | None) -> str:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required.")
+
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required.")
+
+    token_secret = os.getenv("JWT_SECRET_KEY", "super_secret_local_signing_key_string")
+    try:
+        claims = jwt.decode(token, token_secret, algorithms=["HS256"])
+    except jwt.InvalidTokenError:
+        claims = None
+
+    if claims and claims.get("id") is not None:
+        try:
+            user_id = int(claims["id"])
+        except (TypeError, ValueError):
+            user_id = None
+        if user_id is not None and user_id > 0:
+            return f"library_user_{user_id}"
+
+    try:
+        cognito_user = cognito_api("GetUser", {"AccessToken": token})
+    except CognitoApiError as exc:
+        if exc.code in {"NotAuthorizedException", "InvalidToken", "UserNotFoundException"}:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired access token.")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.message)
+
+    attributes = {
+        attribute.get("Name"): attribute.get("Value")
+        for attribute in cognito_user.get("UserAttributes", [])
+        if isinstance(attribute, dict)
+    }
+    subject = attributes.get("sub")
+    if not subject:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Access token has no user identity.")
+
+    subject_hash = hashlib.sha256(subject.encode("utf-8")).hexdigest()
+    return f"library_user_cognito_{subject_hash}"
+
+
+def activate_library_schema(cursor, schema_name: str) -> None:
+    cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s));", (schema_name,))
+    cursor.execute(
+        "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = %s) AS schema_exists;",
+        (schema_name,),
+    )
+    if not cursor.fetchone()["schema_exists"]:
+        cursor.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema_name)))
+        cursor.execute(
+            sql.SQL("SET LOCAL search_path TO {}, pg_catalog").format(sql.Identifier(schema_name))
+        )
+        schema_sql = Path(__file__).with_name("user-schema.sql").read_text(encoding="utf-8")
+        cursor.execute(schema_sql)
+    cursor.execute(
+        sql.SQL("SET LOCAL search_path TO {}, pg_catalog").format(sql.Identifier(schema_name))
+    )
+
+
+@library_app.get("/books")
+def list_books(authorization: str | None = Header(default=None)):
+    schema_name = get_library_schema(authorization)
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            activate_library_schema(cursor, schema_name)
+            cursor.execute("""
+                SELECT b.book_id, b.book_isbn, b.internal_code, b.book_title,
+                       b.publish_date, b.publisher, b.book_description,
+                       t.read_status, t.book_ratings AS rating, t.book_summary
+                FROM book_tracking AS t
+                JOIN book_info AS b ON b.book_id = t.book_id
+                ORDER BY lower(b.book_title), b.book_id;
+            """)
+            books = cursor.fetchall()
+        conn.commit()
+        return {"books": books}
+    except psycopg2.Error as exc:
+        conn.rollback()
+        print(f"Could not list books: {exc}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not load books.")
+    finally:
+        conn.close()
+
+
+@library_app.post("/books", status_code=status.HTTP_201_CREATED)
+def add_book(payload: BookCreate, authorization: str | None = Header(default=None)):
+    schema_name = get_library_schema(authorization)
+    title = payload.book_title.strip()
+    isbn = payload.book_isbn.strip() if payload.book_isbn else None
+    internal_code = payload.internal_code.strip() if payload.internal_code else None
+    if not title:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Book title cannot be blank.")
+    if not isbn and not internal_code:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide an ISBN or an internal code.",
+        )
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            activate_library_schema(cursor, schema_name)
+            cursor.execute(
+                """
+                INSERT INTO book_info (book_isbn, internal_code, book_title, publish_date)
+                VALUES (%s, %s, %s, %s)
+                RETURNING book_id, book_isbn, internal_code, book_title, publish_date;
+                """,
+                (isbn or None, internal_code or None, title, payload.publish_date),
+            )
+            book = cursor.fetchone()
+            cursor.execute(
+                "INSERT INTO book_tracking (user_id, book_id) VALUES (1, %s);",
+                (book["book_id"],),
+            )
+        conn.commit()
+        return {"book": book}
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This book is already in your library.")
+    except psycopg2.Error as exc:
+        conn.rollback()
+        print(f"Could not add book: {exc}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not add book.")
+    finally:
+        conn.close()
+
+
+@library_app.get("/games")
+def list_games(authorization: str | None = Header(default=None)):
+    schema_name = get_library_schema(authorization)
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            activate_library_schema(cursor, schema_name)
+            cursor.execute("""
+                SELECT g.game_id, g.game_title, g.publisher, g.release_date,
+                       g.game_description, t.game_notes, t.play_status,
+                       t.game_ratings AS rating
+                FROM game_tracking AS t
+                JOIN game_info AS g ON g.game_id = t.game_id
+                ORDER BY lower(g.game_title), g.game_id;
+            """)
+            games = cursor.fetchall()
+        conn.commit()
+        return {"games": games}
+    except psycopg2.Error as exc:
+        conn.rollback()
+        print(f"Could not list games: {exc}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not load games.")
+    finally:
+        conn.close()
+
+
+@library_app.post("/games", status_code=status.HTTP_201_CREATED)
+def add_game(payload: GameCreate, authorization: str | None = Header(default=None)):
+    schema_name = get_library_schema(authorization)
+    title = payload.game_title.strip()
+    if not title:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Game title cannot be blank.")
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            activate_library_schema(cursor, schema_name)
+            cursor.execute(
+                """
+                INSERT INTO game_info (game_title, publisher, release_date)
+                VALUES (%s, %s, %s)
+                RETURNING game_id, game_title, publisher, release_date;
+                """,
+                (title, payload.publisher, payload.release_date),
+            )
+            game = cursor.fetchone()
+            cursor.execute(
+                "INSERT INTO game_tracking (user_id, game_id) VALUES (1, %s);",
+                (game["game_id"],),
+            )
+        conn.commit()
+        return {"game": game}
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This game is already in your library.")
+    except psycopg2.Error as exc:
+        conn.rollback()
+        print(f"Could not add game: {exc}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not add game.")
+    finally:
+        conn.close()
+
 
 # 1. Standard Native Auth Registration Route
 @library_app.post("/auth/register", status_code=status.HTTP_201_CREATED)
