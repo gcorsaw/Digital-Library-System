@@ -71,10 +71,39 @@
   <section *ngIf="authenticated">
     <button type="button" (click)="signOut()">Sign out</button>
     <p *ngIf="loading">Loading books...</p>
-    <h2 *ngIf="!loading">Available Books</h2>
+    <h2 *ngIf="!loading">Your Books</h2>
     <ul *ngIf="!loading && books.length">
       <li *ngFor="let book of books">
-        {{ book['book_title'] ?? book['title'] ?? 'Untitled book' }}
+        <h3>{{ book.book_title }}</h3>
+        <label [for]="'status-' + book.book_id">Reading status</label>
+        <select
+          [id]="'status-' + book.book_id"
+          [(ngModel)]="book.read_status"
+          [name]="'status-' + book.book_id"
+        >
+          <option value="want">Want to read</option>
+          <option value="reading">Reading</option>
+          <option value="finished">Finished</option>
+        </select>
+
+        <label [for]="'rating-' + book.book_id">Rating</label>
+        <select
+          [id]="'rating-' + book.book_id"
+          [(ngModel)]="book.rating"
+          [name]="'rating-' + book.book_id"
+        >
+          <option [ngValue]="null">Not rated</option>
+          <option *ngFor="let rating of [1, 2, 3, 4, 5]" [ngValue]="rating">
+            {{ rating }} star{{ rating === 1 ? '' : 's' }}
+          </option>
+        </select>
+        <button
+          type="button"
+          [disabled]="savingBookId !== null"
+          (click)="saveBookProgress(book)"
+        >
+          {{ savingBookId === book.book_id ? 'Saving...' : 'Save progress' }}
+        </button>
       </li>
     </ul>
     <p *ngIf="!loading && !books.length">No books were returned by the API.</p>

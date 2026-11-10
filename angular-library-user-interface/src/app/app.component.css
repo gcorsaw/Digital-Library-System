@@ -38,6 +38,16 @@ button:disabled {
   cursor: auto;
 }
 
+li {
+  margin-bottom: 1.25rem;
+}
+
+label,
+select {
+  display: block;
+  margin: 0.5rem 0;
+}
+
 /* everywhere else */
 * {
   font-family: Arial, Helvetica, sans-serif;

@@ -23,6 +23,9 @@ To apply frontend or Nginx configuration changes, recreate the web service:
 docker compose up -d --force-recreate web_ui
 ```
 
+For the Kubernetes image build, Secret setup, and local port-forward workflow,
+see [KUBERNETES_DEPLOYMENT_OUTLINE.md](./KUBERNETES_DEPLOYMENT_OUTLINE.md).
+
 ## Cognito modes
 
 Compose defaults to Cognito Local. Its development confirmation code is

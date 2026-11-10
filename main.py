@@ -4,6 +4,7 @@ import secrets
 import time
 from datetime import date
 from pathlib import Path
+from typing import Literal
 
 import jwt
 import psycopg2
@@ -13,9 +14,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, EmailStr, Field
+from pwdlib import PasswordHash
 
 library_app = FastAPI(title="Digital Library API")
 app = library_app
+PASSWORD_HASH = PasswordHash.recommended()
 
 # Added CORS middleware to handle client web browser request validation across ports
 library_app.add_middleware(
@@ -230,6 +233,12 @@ class UserRegister(BaseModel):
     email: EmailStr
     password: str
 
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+
 class CognitoRegister(BaseModel):
     email: EmailStr
     password: str
@@ -254,6 +263,11 @@ class GameCreate(BaseModel):
     game_title: str = Field(min_length=1, max_length=255)
     publisher: str | None = Field(default=None, max_length=255)
     release_date: date | None = None
+
+
+class BookProgressUpdate(BaseModel):
+    read_status: Literal["want", "reading", "finished", "want to read", "read"]
+    rating: int | None = Field(default=None, ge=1, le=5)
 
 
 def get_library_schema(authorization: str | None) -> str:
@@ -340,6 +354,85 @@ def list_books(authorization: str | None = Header(default=None)):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not load books.")
     finally:
         conn.close()
+
+
+def save_book_progress(
+    payload: BookProgressUpdate,
+    authorization: str | None,
+    book_id: int | None = None,
+    book_title: str | None = None,
+):
+    schema_name = get_library_schema(authorization)
+    read_status = {"want to read": "want", "read": "finished"}.get(
+        payload.read_status, payload.read_status
+    )
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            activate_library_schema(cursor, schema_name)
+            if book_id is not None:
+                cursor.execute(
+                    """
+                    UPDATE book_tracking AS t
+                    SET read_status = %s, book_ratings = %s
+                    FROM book_info AS b
+                    WHERE t.book_id = b.book_id AND t.book_id = %s
+                    RETURNING b.book_id, b.book_title, t.read_status,
+                              t.book_ratings AS rating;
+                    """,
+                    (read_status, payload.rating, book_id),
+                )
+            else:
+                cursor.execute(
+                    """
+                    UPDATE book_tracking AS t
+                    SET read_status = %s, book_ratings = %s
+                    FROM book_info AS b
+                    WHERE t.book_id = b.book_id AND b.book_title = %s
+                    RETURNING b.book_id, b.book_title, t.read_status,
+                              t.book_ratings AS rating;
+                    """,
+                    (read_status, payload.rating, book_title),
+                )
+            updated_record = cursor.fetchone()
+        if not updated_record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Book not found in your library.",
+            )
+        updated_record["read_status"] = payload.read_status
+        conn.commit()
+        return {
+            "message": "Book progress updated successfully.",
+            "updated_record": updated_record,
+        }
+    except psycopg2.Error as exc:
+        conn.rollback()
+        print(f"Could not update book progress: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not update book progress.",
+        )
+    finally:
+        conn.close()
+
+
+@library_app.put("/books/{book_id}/progress")
+def update_book_progress(
+    book_id: int,
+    payload: BookProgressUpdate,
+    authorization: str | None = Header(default=None),
+):
+    return save_book_progress(payload, authorization, book_id=book_id)
+
+
+@library_app.put("/books/progress")
+def update_book_progress_by_title(
+    book_title: str,
+    payload: BookProgressUpdate,
+    authorization: str | None = Header(default=None),
+):
+    return save_book_progress(payload, authorization, book_title=book_title.strip())
 
 
 @library_app.post("/books", status_code=status.HTTP_201_CREATED)
@@ -462,7 +555,7 @@ async def register_user(user: UserRegister):
             raise HTTPException(status_code=400, detail="Username or email already registered.")
         cursor.execute(
             "INSERT INTO users (username, email, password) VALUES (%s, %s, %s) RETURNING id, username, email;",
-            (user.username, user.email, user.password)
+            (user.username, user.email, PASSWORD_HASH.hash(user.password))
         )
         new_user = cursor.fetchone()
         conn.commit()
@@ -476,6 +569,63 @@ async def register_user(user: UserRegister):
     finally:
         cursor.close()
         conn.close()
+
+
+@library_app.post("/auth/login")
+def login_user(user: UserLogin):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        ensure_user_table_exists(cursor)
+        conn.commit()
+        cursor.execute(
+            """
+            SELECT id, username, email, password
+            FROM users
+            WHERE username = %s OR email = %s;
+            """,
+            (user.username, user.username),
+        )
+        stored_user = cursor.fetchone()
+        if not stored_user:
+            raise HTTPException(status_code=401, detail="Incorrect username or password.")
+
+        stored_password = stored_user["password"]
+        if stored_password.startswith("$argon2"):
+            password_matches = PASSWORD_HASH.verify(user.password, stored_password)
+        else:
+            password_matches = secrets.compare_digest(user.password, stored_password)
+            if password_matches:
+                cursor.execute(
+                    "UPDATE users SET password = %s WHERE id = %s;",
+                    (PASSWORD_HASH.hash(user.password), stored_user["id"]),
+                )
+        if not password_matches:
+            raise HTTPException(status_code=401, detail="Incorrect username or password.")
+
+        token_secret = os.getenv("JWT_SECRET_KEY", "super_secret_local_signing_key_string")
+        token = jwt.encode(
+            {"id": stored_user["id"], "email": stored_user["email"]},
+            token_secret,
+            algorithm="HS256",
+        )
+        conn.commit()
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "user": {
+                "id": stored_user["id"],
+                "username": stored_user["username"],
+                "email": stored_user["email"],
+            },
+        }
+    except HTTPException:
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+
 
 # 2. Amazon Cognito Registration
 @library_app.post("/auth/cognito/register")

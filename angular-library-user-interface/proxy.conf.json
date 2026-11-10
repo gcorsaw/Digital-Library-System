@@ -1,0 +1,14 @@
+{
+  "/auth": {
+    "target": "http://localhost:8001",
+    "secure": false
+  },
+  "/books": {
+    "target": "http://localhost:8001",
+    "secure": false
+  },
+  "/games": {
+    "target": "http://localhost:8001",
+    "secure": false
+  }
+}

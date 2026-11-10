@@ -20,7 +20,7 @@ const resultsTitle = document.getElementById("resultsTitle");
 const resultsList = document.getElementById("resultsList");
 
 // Populated base URL context for backend communication
-const API_BASE_URL = 'http://localhost:5000';
+const API_BASE_URL = '';
 
 // Original function name preserved exactly from your repository file
 async function fetchCatalog () {
@@ -495,10 +495,15 @@ if (sideMenu) {
             } else if (action === "progress") {
                 const bookTitle = prompt("Enter the exact Book Title you want to log progress for:");
                 if (!bookTitle) return;
-                const statusChoice = prompt("Enter reading status (type 'read' or 'want to read'):");
+                const statusChoice = prompt("Enter reading status: want, reading, or finished:");
                 if (!statusChoice) return;
+                const normalizedStatus = statusChoice.trim().toLowerCase();
+                if (!["want", "reading", "finished"].includes(normalizedStatus)) {
+                    alert("Choose want, reading, or finished.");
+                    return;
+                }
                 let ratingChoice = null;
-                if (statusChoice.trim().toLowerCase() === "read") {
+                if (normalizedStatus === "finished") {
                     const ratingInput = prompt("Rate this book from 1 to 5 stars (Optional, leave blank if unrated):");
                     if (ratingInput) {
                         ratingChoice = parseInt(ratingInput, 10);
@@ -514,11 +519,11 @@ if (sideMenu) {
                     const res = await fetch(`${API_BASE_URL}/books/progress?book_title=${encodeURIComponent(bookTitle)}`, {
                         method: "PUT",
                         headers: headers,
-                        body: JSON.stringify({ read_status: statusChoice, rating: ratingChoice })
+                        body: JSON.stringify({ read_status: normalizedStatus, rating: ratingChoice })
                     });
                     const data = await readJson(res);
                     if (!res.ok) throw apiError(res, data, "Progress update failed");
-                    alert(`Successfully logged "${bookTitle}" as "${statusChoice}" with a ${ratingChoice || 'no'} star rating!`);
+                    alert(`Successfully logged "${bookTitle}" as "${normalizedStatus}" with a ${ratingChoice || 'no'} star rating!`);
                     if (typeof routeHandlers["/books"] === "function") { await routeHandlers["/books"](); }
                 } catch (err) { reportActionError(err); }
             }

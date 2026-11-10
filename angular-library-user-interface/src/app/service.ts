@@ -2,6 +2,12 @@ import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 
+declare global {
+  interface Window {
+    DIGITAL_LIBRARY_API_URL?: string;
+  }
+}
+
 export interface AuthTokenResponse {
   access_token: string;
   token_type: string;
@@ -15,12 +21,24 @@ export interface AuthMessageResponse {
 }
 
 export interface BooksResponse {
-  books: Array<Record<string, unknown>>;
+  books: Book[];
+}
+
+export interface Book {
+  book_id: number;
+  book_title: string;
+  read_status: 'want' | 'reading' | 'finished';
+  rating: number | null;
+}
+
+export interface BookProgressResponse {
+  updated_record: Book;
 }
 
 @Injectable({ providedIn: 'root' })
 export class ApiserviceService {
-  private readonly apiBaseUrl = 'http://localhost:8001';
+  private readonly apiBaseUrl =
+    typeof window !== 'undefined' ? window.DIGITAL_LIBRARY_API_URL ?? '' : '';
   private readonly accessTokenKey = 'library_access_token';
 
   constructor(private readonly http: HttpClient) {}
@@ -68,6 +86,23 @@ export class ApiserviceService {
       : new HttpHeaders();
 
     return this.http.get<BooksResponse>(`${this.apiBaseUrl}/books`, { headers });
+  }
+
+  updateBookProgress(
+    bookId: number,
+    readStatus: Book['read_status'],
+    rating: number | null
+  ): Observable<BookProgressResponse> {
+    const token = this.getAccessToken();
+    const headers = token
+      ? new HttpHeaders({ Authorization: `Bearer ${token}` })
+      : new HttpHeaders();
+
+    return this.http.put<BookProgressResponse>(
+      `${this.apiBaseUrl}/books/${bookId}/progress`,
+      { read_status: readStatus, rating },
+      { headers }
+    );
   }
 
   hasAccessToken(): boolean {

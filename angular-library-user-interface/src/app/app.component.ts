@@ -4,7 +4,7 @@ import { RouterOutlet } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { ApiserviceService, AuthTokenResponse } from './service';
+import { ApiserviceService, AuthTokenResponse, Book } from './service';
 
 @Component({
   selector: 'app-root',
@@ -15,7 +15,7 @@ import { ApiserviceService, AuthTokenResponse } from './service';
 })
 export class AppComponent implements OnInit {
   title = 'Library User Interface';
-  books: Array<Record<string, unknown>> = [];
+  books: Book[] = [];
   loading = false;
   error = '';
   message = '';
@@ -24,6 +24,7 @@ export class AppComponent implements OnInit {
   needsConfirmation = false;
   authenticated = false;
   busy = false;
+  savingBookId: number | null = null;
   username = '';
   email = '';
   password = '';
@@ -98,6 +99,28 @@ export class AppComponent implements OnInit {
     this.books = [];
     this.error = '';
     this.message = '';
+  }
+
+  saveBookProgress(book: Book): void {
+    this.error = '';
+    this.message = '';
+    this.savingBookId = book.book_id;
+    this.apiService.updateBookProgress(book.book_id, book.read_status, book.rating).subscribe({
+      next: (response) => {
+        Object.assign(book, response.updated_record);
+        this.savingBookId = null;
+        this.message = `Progress saved for "${book.book_title}".`;
+      },
+      error: (error: HttpErrorResponse) => {
+        this.savingBookId = null;
+        if (error.status === 401) {
+          this.signOut();
+          this.error = 'Your session has expired. Please sign in again.';
+          return;
+        }
+        this.error = this.errorMessage(error);
+      }
+    });
   }
 
   private loadBooks(): void {

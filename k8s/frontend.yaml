@@ -24,7 +24,7 @@ spec:
           # available on a node, Kubernetes can attempt to pull it.
           image: digital-library-frontend:local
           imagePullPolicy: IfNotPresent
-          # The frontend serves HTTP traffic on port 80 inside the Pod.
+          # The root frontend's Nginx configuration listens on port 80.
           ports:
             - containerPort: 80
           # Keep the Pod out of Service endpoints until its HTTP endpoint

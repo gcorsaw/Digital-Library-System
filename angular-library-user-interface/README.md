@@ -4,7 +4,11 @@ This project was generated with [Angular CLI](https://github.com/angular/angular
 
 ## Development server
 
-Run `ng serve` for a dev server. Navigate to `http://localhost:4200/`. The application will automatically reload if you change any of the source files.
+Run `ng serve` for a dev server. Navigate to `http://localhost:4200/`. The
+development proxy forwards `/auth`, `/books`, and `/games` requests to
+`http://localhost:8001`; start the backend on that port as well. The production
+Nginx configuration proxies those same routes to the Kubernetes `backend`
+Service.
 
 ## Code scaffolding
 
